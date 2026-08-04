@@ -44,7 +44,9 @@ SORTABLE = {"created_at": Review.created_at, "helpful_count": Review.helpful_cou
 
 
 def _recalculate(book: Book) -> None:
-    book.rating_average = round(book.rating_sum / book.rating_count, 3) if book.rating_count else 0.0
+    book.rating_average = (
+        round(book.rating_sum / book.rating_count, 3) if book.rating_count else 0.0
+    )
 
 
 class ReviewService:
@@ -87,13 +89,17 @@ class ReviewService:
         self, session: AsyncSession, *, book_id: uuid.UUID, user_id: uuid.UUID
     ) -> Review | None:
         return (
-            await session.execute(
-                select(Review).where(
-                    Review.book_id == book_id,
-                    Review.user_id == user_id,
+            (
+                await session.execute(
+                    select(Review).where(
+                        Review.book_id == book_id,
+                        Review.user_id == user_id,
+                    )
                 )
             )
-        ).scalars().one_or_none()
+            .scalars()
+            .one_or_none()
+        )
 
     async def list_for_book(
         self,
@@ -134,9 +140,7 @@ class ReviewService:
                 last_id = uuid.UUID(str(data["id"]))
             except (KeyError, TypeError, ValueError) as exc:
                 raise BadRequestError("The pagination cursor is malformed.") from exc
-            stmt = stmt.where(
-                or_(column < value, and_(column == value, Review.id < last_id))
-            )
+            stmt = stmt.where(or_(column < value, and_(column == value, Review.id < last_id)))
 
         stmt = stmt.order_by(column.desc(), Review.id.desc()).limit(limit + 1)
         rows = list((await session.execute(stmt)).scalars().unique().all())
@@ -292,9 +296,7 @@ class ReviewService:
 
         existing = await session.get(ReviewVote, {"review_id": review.id, "user_id": user_id})
         if existing is None:
-            session.add(
-                ReviewVote(review_id=review.id, user_id=user_id, is_helpful=is_helpful)
-            )
+            session.add(ReviewVote(review_id=review.id, user_id=user_id, is_helpful=is_helpful))
             review.helpful_count = max(0, review.helpful_count + (1 if is_helpful else -1))
         elif existing.is_helpful != is_helpful:
             existing.is_helpful = is_helpful

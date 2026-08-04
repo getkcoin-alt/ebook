@@ -1,0 +1,8 @@
+# Book service dependencies.
+# knowledgeos-core provides FastAPI, SQLAlchemy, Redis, boto3, structlog and uvicorn.
+
+# Alembic migrations run through a blocking driver.
+psycopg[binary]>=3.2.3
+
+# EmailStr on review/author payloads.
+email-validator>=2.2.0

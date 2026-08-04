@@ -65,10 +65,14 @@ class TaxonomyService:
     @staticmethod
     async def _by_slug(session: AsyncSession, model: type[ModelT], slug: str) -> ModelT:
         entity = (
-            await session.execute(
-                select(model).where(model.slug == slug, model.deleted_at.is_(None))
+            (
+                await session.execute(
+                    select(model).where(model.slug == slug, model.deleted_at.is_(None))
+                )
             )
-        ).scalars().one_or_none()
+            .scalars()
+            .one_or_none()
+        )
         if entity is None:
             raise NotFoundError(f"{model.__name__} not found.", details={"slug": slug})
         return entity
@@ -101,9 +105,7 @@ class TaxonomyService:
             stmt = stmt.where(extra)
         if search:
             stmt = apply_search(stmt, model, term=search, fields=search_fields)
-        stmt = apply_sorting(
-            stmt, model, sort_by=sort_by, sort_order=sort_order, allowed=allowed
-        )
+        stmt = apply_sorting(stmt, model, sort_by=sort_by, sort_order=sort_order, allowed=allowed)
         return await paginate(session, stmt, params)
 
     # ---- authors --------------------------------------------------------
@@ -216,9 +218,7 @@ class TaxonomyService:
 
     async def delete_publisher(self, session: AsyncSession, publisher: Publisher) -> None:
         linked = (
-            await session.execute(
-                select(Book.id).where(Book.publisher_id == publisher.id).limit(1)
-            )
+            await session.execute(select(Book.id).where(Book.publisher_id == publisher.id).limit(1))
         ).scalar_one_or_none()
         if linked is not None:
             raise ConflictError(
@@ -283,9 +283,7 @@ class TaxonomyService:
     async def delete_category(self, session: AsyncSession, category: Category) -> None:
         linked = (
             await session.execute(
-                select(BookCategory.book_id)
-                .where(BookCategory.category_id == category.id)
-                .limit(1)
+                select(BookCategory.book_id).where(BookCategory.category_id == category.id).limit(1)
             )
         ).scalar_one_or_none()
         if linked is not None:
@@ -318,8 +316,7 @@ class TaxonomyService:
                 raise NotFoundError("Parent category not found.", details={"id": str(current)})
             current = parent.parent_id
         raise BadRequestError(
-            "The category tree cannot be deeper than "
-            f"{MAX_CATEGORY_DEPTH} levels.",
+            f"The category tree cannot be deeper than {MAX_CATEGORY_DEPTH} levels.",
         )
 
     async def category_tree(self, session: AsyncSession) -> list[CategoryNode]:
@@ -340,9 +337,7 @@ class TaxonomyService:
             .all()
         )
         tree = self._assemble(rows)
-        await self._cache.set_category_tree(
-            [node.model_dump(mode="json") for node in tree]
-        )
+        await self._cache.set_category_tree([node.model_dump(mode="json") for node in tree])
         return tree
 
     @staticmethod
@@ -370,4 +365,3 @@ class TaxonomyService:
                 await session.flush()
         except IntegrityError as exc:
             raise ConflictError(conflict_message) from exc
-

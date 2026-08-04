@@ -48,5 +48,11 @@ class Settings(ServiceSettings):
     #: entitlement row. Turn off to require an explicit grant for every book.
     free_books_readable: bool = True
 
+    # ---- events ---------------------------------------------------------
+    #: Consume payment events to grant entitlements. Disabled in tests, where the
+    #: consumer's blocking XREADGROUP has no fakeredis equivalent.
+    events_enabled: bool = True
+    event_consumer_group: str = "books"
+
 
 settings = Settings()

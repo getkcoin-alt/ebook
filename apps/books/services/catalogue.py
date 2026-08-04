@@ -86,7 +86,7 @@ _CURSOR_DECODERS: dict[str, Any] = {
 PRICE_BUCKETS: tuple[tuple[str, str, int, int | None], ...] = (
     ("free", "Free", 0, 0),
     ("under_200", "Under ₹200", 1, 20_000),
-    ("200_500", "₹200 – ₹500", 20_001, 50_000),
+    ("200_500", "₹200 – ₹500", 20_001, 50_000),  # noqa: RUF001 - en dash is intentional prose
     ("over_500", "Over ₹500", 50_001, None),
 )
 
@@ -256,9 +256,7 @@ class CatalogueService:
             # with no file is one the reader cannot actually open.
             stmt = stmt.where(column.is_not(None))
         if filters.free_only:
-            stmt = stmt.where(
-                or_(Book.price_minor == 0, Book.discount_price_minor == 0)
-            )
+            stmt = stmt.where(or_(Book.price_minor == 0, Book.discount_price_minor == 0))
         if filters.min_price_minor is not None:
             stmt = stmt.where(Book.price_minor >= filters.min_price_minor)
         if filters.max_price_minor is not None:
@@ -307,7 +305,9 @@ class CatalogueService:
                 )
 
         ordering = (
-            (column.desc(), Book.id.desc()) if sort_order == "desc" else (column.asc(), Book.id.asc())
+            (column.desc(), Book.id.desc())
+            if sort_order == "desc"
+            else (column.asc(), Book.id.asc())
         )
         stmt = stmt.order_by(*ordering).limit(limit + 1)
 
@@ -388,9 +388,7 @@ class CatalogueService:
                 condition = and_(condition, Book.price_minor <= high)
             price_columns.append(func.sum(case((condition, 1), else_=0)).label(key))
         price_row = (
-            await session.execute(
-                select(*price_columns).where(Book.id.in_(select(book_ids.c.id)))
-            )
+            await session.execute(select(*price_columns).where(Book.id.in_(select(book_ids.c.id))))
         ).one()
 
         return CatalogueFacets(
@@ -424,9 +422,7 @@ class CatalogueService:
                 Book.deleted_at.is_(None),
                 Book.status == BookStatus.PUBLISHED,
                 Book.id.in_(
-                    select(BookCategory.book_id).where(
-                        BookCategory.category_id.in_(category_ids)
-                    )
+                    select(BookCategory.book_id).where(BookCategory.category_id.in_(category_ids))
                 ),
             )
             .options(*self.list_options())
@@ -622,7 +618,9 @@ class CatalogueService:
         )
         missing = [str(c.author_id) for c in contributors if c.author_id not in known]
         if missing:
-            raise NotFoundError("One or more authors do not exist.", details={"author_ids": missing})
+            raise NotFoundError(
+                "One or more authors do not exist.", details={"author_ids": missing}
+            )
         seen: set[uuid.UUID] = set()
         for contributor in contributors:
             if contributor.author_id in seen:

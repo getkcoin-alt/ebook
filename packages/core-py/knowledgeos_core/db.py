@@ -44,6 +44,17 @@ class Base(DeclarativeBase):
 
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
+    # Fetch server-generated values (``server_default``, ``onupdate=func.now()``) as
+    # part of the INSERT/UPDATE via RETURNING, instead of expiring the attribute and
+    # reloading it on next access.
+    #
+    # Without this, reading ``updated_at`` straight after a write raises
+    # `MissingGreenlet: greenlet_spawn has not been called` — the expired attribute
+    # wants a lazy SELECT, and under asyncio that emits IO from a synchronous
+    # context, typically during response serialisation. PostgreSQL supports
+    # RETURNING, so this costs nothing.
+    __mapper_args__ = {"eager_defaults": True}
+
 
 #: Dialect-agnostic UUID column type.
 #:

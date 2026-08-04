@@ -79,9 +79,7 @@ def _enum(enum_cls: type, name: str) -> SAEnum:
 
 
 def _uuid_fk(target: str, *, ondelete: str = "CASCADE", **kwargs: object) -> Mapped[uuid.UUID]:
-    return mapped_column(
-        UUIDType, ForeignKey(f"{SCHEMA}.{target}", ondelete=ondelete), **kwargs
-    )
+    return mapped_column(UUIDType, ForeignKey(f"{SCHEMA}.{target}", ondelete=ondelete), **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -422,8 +420,9 @@ class Review(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
         UniqueConstraint("book_id", "user_id", name="uq_reviews_book_id_user_id"),
         CheckConstraint("rating >= 1 AND rating <= 5", name="rating_between_1_and_5"),
         Index("ix_reviews_book_id_status_created_at_id", "book_id", "status", "created_at", "id"),
-        Index("ix_reviews_book_id_status_helpful_count_id", "book_id", "status", "helpful_count",
-              "id"),
+        Index(
+            "ix_reviews_book_id_status_helpful_count_id", "book_id", "status", "helpful_count", "id"
+        ),
         Index("ix_reviews_user_id_created_at", "user_id", "created_at"),
         {"schema": SCHEMA},
     )
@@ -475,8 +474,9 @@ class ReviewVote(Base, TimestampMixin):
 class Bookmark(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "bookmarks"
     __table_args__ = (
-        Index("ix_bookmarks_user_id_book_id_created_at_id", "user_id", "book_id", "created_at",
-              "id"),
+        Index(
+            "ix_bookmarks_user_id_book_id_created_at_id", "user_id", "book_id", "created_at", "id"
+        ),
         Index("ix_bookmarks_book_id", "book_id"),
         {"schema": SCHEMA},
     )

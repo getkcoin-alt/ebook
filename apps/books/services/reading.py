@@ -104,12 +104,16 @@ class ReadingService:
         self, session: AsyncSession, *, user_id: uuid.UUID, book_id: uuid.UUID
     ) -> ReadingProgress | None:
         return (
-            await session.execute(
-                select(ReadingProgress).where(
-                    ReadingProgress.user_id == user_id, ReadingProgress.book_id == book_id
+            (
+                await session.execute(
+                    select(ReadingProgress).where(
+                        ReadingProgress.user_id == user_id, ReadingProgress.book_id == book_id
+                    )
                 )
             )
-        ).scalars().one_or_none()
+            .scalars()
+            .one_or_none()
+        )
 
     async def sync_progress(
         self,
@@ -173,7 +177,7 @@ class ReadingService:
     async def list_progress(
         self, session: AsyncSession, *, user_id: uuid.UUID, cursor: str | None, limit: int
     ) -> tuple[list[ReadingProgress], str | None, bool]:
-        """"Continue reading": most recently opened first."""
+        """ "Continue reading": most recently opened first."""
         stmt = select(ReadingProgress).where(ReadingProgress.user_id == user_id)
         if cursor:
             last_read_at, last_id = _decode_time_cursor(cursor)
@@ -186,9 +190,9 @@ class ReadingService:
                     ),
                 )
             )
-        stmt = stmt.order_by(
-            ReadingProgress.last_read_at.desc(), ReadingProgress.id.desc()
-        ).limit(limit + 1)
+        stmt = stmt.order_by(ReadingProgress.last_read_at.desc(), ReadingProgress.id.desc()).limit(
+            limit + 1
+        )
         rows = list((await session.execute(stmt)).scalars().all())
         return _slice(rows, limit, key="last_read_at")
 

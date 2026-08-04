@@ -51,9 +51,7 @@ class ListService:
     async def add_to_wishlist(
         self, session: AsyncSession, *, user_id: uuid.UUID, payload: WishlistAdd
     ) -> WishlistItem:
-        existing = await session.get(
-            WishlistItem, {"user_id": user_id, "book_id": payload.book_id}
-        )
+        existing = await session.get(WishlistItem, {"user_id": user_id, "book_id": payload.book_id})
         if existing is not None:
             existing.note = payload.note or existing.note
             await session.flush()
@@ -100,9 +98,7 @@ class ListService:
         next_cursor = None
         if has_more and rows:
             last = rows[-1][0]
-            next_cursor = encode_cursor(
-                {"v": last.created_at.isoformat(), "id": str(last.book_id)}
-            )
+            next_cursor = encode_cursor({"v": last.created_at.isoformat(), "id": str(last.book_id)})
         return rows, next_cursor, has_more
 
     async def remove_from_wishlist(

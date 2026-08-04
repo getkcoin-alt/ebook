@@ -148,9 +148,7 @@ class EntitlementEventHandler:
             # Recorded as processed regardless: an event we cannot act on will not
             # become actionable on redelivery, and leaving it unacknowledged would
             # have it retried five times and then dead-lettered.
-            logger.warning(
-                "event.unusable_payload", event_id=event.id, event_type=event.type
-            )
+            logger.warning("event.unusable_payload", event_id=event.id, event_type=event.type)
             return 0
 
         created = 0

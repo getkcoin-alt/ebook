@@ -91,9 +91,7 @@ class EntitlementService:
             expires_at=None,
         )
 
-    async def access(
-        self, session: AsyncSession, *, user_id: uuid.UUID, book: Book
-    ) -> AccessOut:
+    async def access(self, session: AsyncSession, *, user_id: uuid.UUID, book: Book) -> AccessOut:
         entitlement = await self.find_active(session, user_id=user_id, book_id=book.id)
         if entitlement is not None:
             return AccessOut(
@@ -157,15 +155,19 @@ class EntitlementService:
         row and both insert. Both paths converge on one row.
         """
         existing = (
-            await session.execute(
-                select(Entitlement).where(
-                    Entitlement.user_id == user_id,
-                    Entitlement.book_id == book_id,
-                    Entitlement.source == source,
-                    Entitlement.external_ref == external_ref,
+            (
+                await session.execute(
+                    select(Entitlement).where(
+                        Entitlement.user_id == user_id,
+                        Entitlement.book_id == book_id,
+                        Entitlement.source == source,
+                        Entitlement.external_ref == external_ref,
+                    )
                 )
             )
-        ).scalars().one_or_none()
+            .scalars()
+            .one_or_none()
+        )
 
         if existing is not None:
             if existing.revoked_at is not None:
@@ -174,9 +176,7 @@ class EntitlementService:
                 existing.revoked_at = None
                 existing.granted_at = datetime.now(UTC)
                 await session.flush()
-                logger.info(
-                    "entitlement.reinstated", user_id=str(user_id), book_id=str(book_id)
-                )
+                logger.info("entitlement.reinstated", user_id=str(user_id), book_id=str(book_id))
             return existing, False
 
         entitlement = Entitlement(
@@ -197,15 +197,19 @@ class EntitlementService:
                 await session.flush()
         except IntegrityError:
             found = (
-                await session.execute(
-                    select(Entitlement).where(
-                        Entitlement.user_id == user_id,
-                        Entitlement.book_id == book_id,
-                        Entitlement.source == source,
-                        Entitlement.external_ref == external_ref,
+                (
+                    await session.execute(
+                        select(Entitlement).where(
+                            Entitlement.user_id == user_id,
+                            Entitlement.book_id == book_id,
+                            Entitlement.source == source,
+                            Entitlement.external_ref == external_ref,
+                        )
                     )
                 )
-            ).scalars().one_or_none()
+                .scalars()
+                .one_or_none()
+            )
             if found is None:  # pragma: no cover - the FK, not the unique key
                 raise
             logger.info("entitlement.grant_raced", user_id=str(user_id), book_id=str(book_id))

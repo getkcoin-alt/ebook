@@ -23,6 +23,10 @@ Railway docs.
 | `auth` | repo · `apps/auth/Dockerfile` | Identity, tokens, JWKS |
 | `gateway` | repo · `apps/gateway/Dockerfile` | **The only public ingress** |
 
+**Current state:** `gateway` and `redis` deploy successfully. `auth` cannot start
+because Postgres is not accepting connections — see problem 5 below, which needs a
+dashboard action.
+
 Everything else reaches its dependencies over `*.railway.internal`. Only `gateway`
 has a public domain.
 
@@ -96,6 +100,47 @@ RUN pip install --no-deps --force-reinstall ./packages/core-py
 
 hatchling needs the package directory to exist, not to be complete.
 
+### 5. Postgres never started — no volume attached (UNRESOLVED, needs you)
+
+`ghcr.io/railwayapp-templates/postgres-ssl` **refuses to start without a volume**
+mounted at exactly `/var/lib/postgresql/data`. Without one it loops:
+
+```
+Railway volume not mounted to the correct path, expected /var/lib/postgresql/data but got
+Please update the volume mount path to the expected path and redeploy the service
+```
+
+The deployment still reports **SUCCESS**, because the container did start — it is
+just refusing to run Postgres. That is a genuinely misleading status: the only way to
+notice is to read the logs or watch dependent services time out.
+
+Downstream symptom, from the auth service:
+
+```
+sqlalchemy.exc.OperationalError: (psycopg.errors.ConnectionTimeout) connection timeout expired
+- host: 'postgres.railway.internal', port: 5432 : connection timeout expired
+```
+
+DNS resolved fine (both an IPv6 and IPv4 address came back) — nothing was listening.
+
+**Attempted fix that did not work.** Setting `volumeMounts` through the API persists
+in the service config, and `get-service-config` reports it correctly, but the volume
+is never actually provisioned: `hasVolume` stays `false` and the container still sees
+no mount across repeated redeploys.
+
+**Action required in the Railway dashboard:**
+
+1. Open the `Postgres` service → **Variables/Settings → Volumes → Add Volume**
+2. Mount path: `/var/lib/postgresql/data` (10GB is ample)
+3. Redeploy
+
+`PGDATA` is already set to `/var/lib/postgresql/data/pgdata`, a subdirectory of the
+mount — that is deliberate and correct. Postgres refuses to initialise into a
+directory containing `lost+found`, which a fresh volume root has.
+
+Confirm success by looking for `database system is ready to accept connections` in
+the Postgres logs, after which `auth` will start on its next deploy.
+
 ### 3. Service config must be set before the first deploy
 
 `create-deployment` triggers a build **immediately**, before there is any chance to
@@ -124,6 +169,19 @@ it to `apps/auth` puts `packages/core-py` outside the context and the `COPY` fai
   exists. They are currently permissive.
 - Supply the third-party keys in [`../MANUAL_SETUP.md`](../MANUAL_SETUP.md) — OAuth,
   payments, AI and email are all unconfigured, so those features degrade off.
+
+## A note on verification from a sandbox
+
+The build environment's egress proxy blocks `*.up.railway.app`:
+
+```
+connect_rejected — gateway answered 403 to CONNECT (policy denial)
+```
+
+So the public URL could not be curled from where this was built. The evidence that
+`gateway` is serving is Railway's own healthcheck against `/health` passing, which is
+what promotes a deployment to SUCCESS — a real signal, but Railway's assertion rather
+than a direct observation. **Check the URL from a browser to confirm.**
 
 ## Verifying a deploy
 

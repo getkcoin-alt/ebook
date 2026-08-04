@@ -1,0 +1,35 @@
+{
+  "name": "knowledgeos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KnowledgeOS - AI-first e-book commerce platform",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,md,json,yml,yaml}\"",
+    "py:lint": "ruff check apps packages",
+    "py:format": "ruff format apps packages",
+    "py:typecheck": "mypy apps packages/core-py",
+    "py:test": "pytest",
+    "stack:up": "docker compose -f infrastructure/docker/docker-compose.yml up -d",
+    "stack:down": "docker compose -f infrastructure/docker/docker-compose.yml down",
+    "stack:logs": "docker compose -f infrastructure/docker/docker-compose.yml logs -f",
+    "stack:reset": "docker compose -f infrastructure/docker/docker-compose.yml down -v"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  }
+}

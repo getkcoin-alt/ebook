@@ -1,0 +1,47 @@
+# Build context hygiene. Every entry here is a layer-cache invalidation avoided:
+# without this, editing a README or running the test suite would bust the Docker
+# cache and rebuild every dependency layer.
+
+.git
+.github
+.gitignore
+.venv
+venv
+node_modules
+**/node_modules
+**/.next
+**/.turbo
+**/dist
+**/coverage
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.egg-info
+**/htmlcov
+**/.coverage
+**/playwright-report
+**/test-results
+**/storybook-static
+
+# Never let a real .env reach an image — it would be baked into a layer and
+# readable by anyone who can pull it.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+secrets/
+
+docs
+*.md
+!apps/*/README.md
+.editorconfig
+.prettierrc*
+docker-data
+logs
+tmp

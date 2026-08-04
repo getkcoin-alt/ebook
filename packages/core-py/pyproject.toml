@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "knowledgeos-core"
+version = "0.1.0"
+description = "Shared runtime foundation for all KnowledgeOS Python services"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.141.0",
+    "pydantic>=2.10.4",
+    "pydantic-settings>=2.7.0",
+    "structlog>=24.4.0",
+    "orjson>=3.10.13",
+    "httpx>=0.28.1",
+    "redis>=5.2.1",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "prometheus-client>=0.21.1",
+    "python-jose[cryptography]>=3.3.0",
+    "bcrypt>=4.2.1",
+    "boto3>=1.35.87",
+    "tenacity>=9.0.0",
+    "uvicorn[standard]>=0.34.0",
+]
+
+[project.optional-dependencies]
+# Only the automation, worker and notification services run Celery. Keeping it out
+# of the base install saves ~40MB and a dozen transitive deps in the API images.
+tasks = [
+    "celery[redis]>=5.4.0",
+    "kombu>=5.4.2",
+    "flower>=2.0.1",
+]
+dev = [
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.25.0",
+    "pytest-cov>=6.0.0",
+    "asgi-lifespan>=2.1.0",
+    "fakeredis>=2.26.2",
+    "aiosqlite>=0.20.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["knowledgeos_core"]

@@ -1,0 +1,10 @@
+packages:
+  - "apps/frontend"
+  - "packages/ui"
+  - "packages/config"
+  - "packages/logger"
+  - "packages/auth-sdk"
+  - "packages/types"
+  - "packages/api-client"
+  - "packages/shared"
+  - "packages/utils"

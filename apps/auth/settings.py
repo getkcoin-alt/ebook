@@ -11,8 +11,9 @@ from __future__ import annotations
 import base64
 import hashlib
 
-from knowledgeos_core import ServiceSettings
 from pydantic import computed_field, field_validator
+
+from knowledgeos_core import ServiceSettings
 
 
 def _normalise_pem(value: str | None) -> str | None:
@@ -68,7 +69,7 @@ class Settings(ServiceSettings):
     credential_response_floor_ms: int = 120
 
     # ---- cookies --------------------------------------------------------
-    refresh_cookie_name: str = "kos_refresh"  # noqa: S105 - cookie name, not a secret
+    refresh_cookie_name: str = "kos_refresh"
     csrf_cookie_name: str = "kos_csrf"
     #: Scoped to the auth routes: no other endpoint has any use for the cookie, so
     #: it is never attached to a request that cannot consume it.

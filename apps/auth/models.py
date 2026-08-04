@@ -10,7 +10,6 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from knowledgeos_core import Base, SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -24,8 +23,9 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
+
+from knowledgeos_core import Base, SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin, UUIDType
 
 SCHEMA = "auth"
 
@@ -37,8 +37,9 @@ JSONType = JSON().with_variant(JSONB(), "postgresql")
 HASH_LEN = 64
 
 
-def _uuid_column(**kwargs: Any) -> Mapped[uuid.UUID]:
-    return mapped_column(PGUUID(as_uuid=True), **kwargs)
+def _uuid_column(*args: Any, **kwargs: Any) -> Mapped[uuid.UUID]:
+    """A UUID column. Positional args pass through, so ``ForeignKey`` works."""
+    return mapped_column(UUIDType, *args, **kwargs)
 
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
@@ -140,7 +141,9 @@ class RefreshToken(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     #: SHA-256 of the double-submit CSRF value handed out with this token.
     csrf_hash: Mapped[str] = mapped_column(String(HASH_LEN), nullable=False)
 
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_reason: Mapped[str | None] = mapped_column(String(60))
@@ -188,14 +191,16 @@ class EmailVerificationToken(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     purpose: Mapped[str] = mapped_column(String(32), nullable=False, default="email_verify")
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     meta: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PasswordResetToken(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """Single-use, expiring, hashed password-reset credential."""
 
-    __tablename__ = "password_reset_tokens"  # noqa: S105 - table name, not a credential
+    __tablename__ = "password_reset_tokens"
     __table_args__ = ({"schema": SCHEMA},)
 
     user_id: Mapped[uuid.UUID] = _uuid_column(
@@ -204,7 +209,9 @@ class PasswordResetToken(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     token_hash: Mapped[str] = mapped_column(
         String(HASH_LEN), nullable=False, unique=True, index=True
     )
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     requested_ip: Mapped[str | None] = mapped_column(String(45))
 
@@ -212,7 +219,7 @@ class PasswordResetToken(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 class TotpSecret(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """A user's TOTP shared secret, encrypted at rest."""
 
-    __tablename__ = "totp_secrets"  # noqa: S105 - table name, not a credential
+    __tablename__ = "totp_secrets"
     __table_args__ = ({"schema": SCHEMA},)
 
     user_id: Mapped[uuid.UUID] = _uuid_column(

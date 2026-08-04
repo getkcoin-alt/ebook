@@ -13,8 +13,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, MetaData, func, text
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy import DateTime, MetaData, Uuid, func, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -46,6 +45,15 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
+#: Dialect-agnostic UUID column type.
+#:
+#: ``sqlalchemy.Uuid`` renders as PostgreSQL's native ``UUID`` in production and as
+#: ``CHAR(32)`` on SQLite. Using the postgresql-specific type here instead would make
+#: every model unusable on SQLite, which in turn would mean no service could be
+#: tested without a live database — a cost paid on every CI run and every laptop.
+UUIDType = Uuid(as_uuid=True)
+
+
 class UUIDPrimaryKeyMixin:
     """UUIDv4 primary keys, generated application-side.
 
@@ -54,9 +62,7 @@ class UUIDPrimaryKeyMixin:
     the same transaction that creates the row.
     """
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUIDType, primary_key=True, default=uuid.uuid4)
 
 
 class TimestampMixin:
@@ -94,26 +100,34 @@ class Database:
                 f"{settings.service_name}: DATABASE_URL is required but was not set."
             )
         self._settings = settings
-        self._engine: AsyncEngine = create_async_engine(
-            settings.database_url,
-            echo=settings.db_echo,
-            pool_size=settings.db_pool_size,
-            max_overflow=settings.db_max_overflow,
-            pool_timeout=settings.db_pool_timeout,
-            pool_recycle=settings.db_pool_recycle,
-            # Verifies a pooled connection before handing it out. Essential on
-            # Railway, where the Postgres plugin can drop idle connections.
-            pool_pre_ping=True,
-            connect_args={
-                "server_settings": {
-                    "application_name": settings.service_name,
-                    "jit": "off",
+        url = settings.database_url
+        options: dict[str, Any] = {"echo": settings.db_echo}
+
+        # Connection pooling and driver options are dialect-specific. SQLite (used by
+        # service test suites so they need no live database) rejects the pool
+        # arguments outright, and `server_settings` is an asyncpg concept that means
+        # nothing to any other driver.
+        if url.startswith("postgresql"):
+            options.update(
+                pool_size=settings.db_pool_size,
+                max_overflow=settings.db_max_overflow,
+                pool_timeout=settings.db_pool_timeout,
+                pool_recycle=settings.db_pool_recycle,
+                # Verifies a pooled connection before handing it out. Essential on
+                # Railway, where the Postgres plugin can drop idle connections.
+                pool_pre_ping=True,
+                connect_args={
+                    "server_settings": {
+                        "application_name": settings.service_name,
+                        "jit": "off",
+                    },
+                    # asyncpg caches prepared statements per connection; pgbouncer in
+                    # transaction mode breaks that, so keep the cache off.
+                    "statement_cache_size": 0,
                 },
-                # asyncpg caches prepared statements per connection; pgbouncer in
-                # transaction mode breaks that, so keep the cache off.
-                "statement_cache_size": 0,
-            },
-        )
+            )
+
+        self._engine: AsyncEngine = create_async_engine(url, **options)
         self._sessionmaker: async_sessionmaker[AsyncSession] = async_sessionmaker(
             bind=self._engine,
             class_=AsyncSession,
@@ -167,6 +181,10 @@ class Database:
         """
         schema = self._settings.database_schema
         if schema == "public":
+            return
+        # SQLite has no schemas. Test suites ATTACH a database under the service's
+        # schema name instead, so there is nothing to create here.
+        if self._engine.dialect.name != "postgresql":
             return
         async with self._engine.begin() as conn:
             await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))

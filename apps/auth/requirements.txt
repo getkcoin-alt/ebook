@@ -1,0 +1,18 @@
+# Auth service dependencies.
+# knowledgeos-core (installed from packages/core-py) already provides FastAPI,
+# SQLAlchemy, Redis, structlog, python-jose, bcrypt and uvicorn.
+
+# RSA keypair handling and Fernet encryption of TOTP secrets.
+cryptography>=44.0.0
+
+# TOTP second factor.
+pyotp>=2.9.0
+
+# Alembic migrations run through a blocking driver.
+psycopg[binary]>=3.2.3
+
+# Email address validation for Pydantic's EmailStr.
+email-validator>=2.2.0
+
+# OAuth calls to Google and GitHub.
+httpx>=0.28.1

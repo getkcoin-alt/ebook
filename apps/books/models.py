@@ -40,7 +40,6 @@ from sqlalchemy import (
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from knowledgeos_core import (
@@ -50,6 +49,7 @@ from knowledgeos_core import (
     SoftDeleteMixin,
     TimestampMixin,
     UUIDPrimaryKeyMixin,
+    UUIDType,
 )
 from schemas import ContributorRole, EntitlementSource, ReviewStatus
 
@@ -80,7 +80,7 @@ def _enum(enum_cls: type, name: str) -> SAEnum:
 
 def _uuid_fk(target: str, *, ondelete: str = "CASCADE", **kwargs: object) -> Mapped[uuid.UUID]:
     return mapped_column(
-        PGUUID(as_uuid=True), ForeignKey(f"{SCHEMA}.{target}", ondelete=ondelete), **kwargs
+        UUIDType, ForeignKey(f"{SCHEMA}.{target}", ondelete=ondelete), **kwargs
     )
 
 
@@ -142,7 +142,7 @@ class Category(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
     description: Mapped[str | None] = mapped_column(Text)
     icon: Mapped[str | None] = mapped_column(String(100))
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True),
+        UUIDType,
         ForeignKey(f"{SCHEMA}.categories.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -259,12 +259,12 @@ class Book(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
         Integer, nullable=False, default=1, server_default=text("1")
     )
     publisher_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True),
+        UUIDType,
         ForeignKey(f"{SCHEMA}.publishers.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_by: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True))
-    updated_by: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUIDType)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(UUIDType)
 
     publisher: Mapped[Publisher | None] = relationship(lazy="raise_on_sql")
     author_links: Mapped[list[BookAuthor]] = relationship(
@@ -404,7 +404,7 @@ class BookVersion(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     changelog: Mapped[str | None] = mapped_column(Text)
     file_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     checksum: Mapped[str | None] = mapped_column(String(128))
-    created_by: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUIDType)
 
     book: Mapped[Book] = relationship(back_populates="versions", lazy="raise_on_sql")
 
@@ -430,7 +430,7 @@ class Review(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
 
     book_id: Mapped[uuid.UUID] = _uuid_fk("books.id", nullable=False)
     #: The reviewer, taken from the access token — never from the request body.
-    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUIDType, nullable=False)
     rating: Mapped[int] = mapped_column(Integer, nullable=False)
     title: Mapped[str | None] = mapped_column(String(255))
     body: Mapped[str | None] = mapped_column(Text)
@@ -446,7 +446,7 @@ class Review(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
     helpful_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
     )
-    moderated_by: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    moderated_by: Mapped[uuid.UUID | None] = mapped_column(UUIDType)
     moderated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     moderation_note: Mapped[str | None] = mapped_column(String(1_000))
 
@@ -461,7 +461,7 @@ class ReviewVote(Base, TimestampMixin):
     )
 
     review_id: Mapped[uuid.UUID] = _uuid_fk("reviews.id", primary_key=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUIDType, primary_key=True)
     is_helpful: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
     )
@@ -481,7 +481,7 @@ class Bookmark(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         {"schema": SCHEMA},
     )
 
-    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUIDType, nullable=False)
     book_id: Mapped[uuid.UUID] = _uuid_fk("books.id", nullable=False)
     position: Mapped[str] = mapped_column(String(255), nullable=False)
     page_number: Mapped[int | None] = mapped_column(Integer)
@@ -499,7 +499,7 @@ class ReadingProgress(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         {"schema": SCHEMA},
     )
 
-    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUIDType, nullable=False)
     book_id: Mapped[uuid.UUID] = _uuid_fk("books.id", nullable=False)
     position: Mapped[str | None] = mapped_column(String(255))
     page_number: Mapped[int | None] = mapped_column(Integer)
@@ -531,7 +531,7 @@ class WishlistItem(Base, TimestampMixin):
         {"schema": SCHEMA},
     )
 
-    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUIDType, primary_key=True)
     book_id: Mapped[uuid.UUID] = _uuid_fk("books.id", primary_key=True)
     note: Mapped[str | None] = mapped_column(String(1_000))
 
@@ -545,7 +545,7 @@ class Collection(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
         {"schema": SCHEMA},
     )
 
-    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUIDType, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
@@ -614,7 +614,7 @@ class Entitlement(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         {"schema": SCHEMA},
     )
 
-    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUIDType, nullable=False)
     book_id: Mapped[uuid.UUID] = _uuid_fk("books.id", ondelete="RESTRICT", nullable=False)
     source: Mapped[EntitlementSource] = mapped_column(
         _enum(EntitlementSource, "entitlement_source"), nullable=False
@@ -625,7 +625,7 @@ class Entitlement(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     external_ref: Mapped[str] = mapped_column(
         String(255), nullable=False, default="", server_default=text("''")
     )
-    order_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    order_id: Mapped[uuid.UUID | None] = mapped_column(UUIDType)
     can_read: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
     )

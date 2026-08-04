@@ -36,7 +36,23 @@ ignore = [
 "**/scripts/**" = ["T20"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["knowledgeos_core"]
+# Services run with their own directory on PYTHONPATH and import their modules
+# flat (`from models import Book`). Without listing them, ruff classifies those as
+# third-party and every service file fails I001.
+known-first-party = [
+    "knowledgeos_core",
+    "cookies",
+    "deps",
+    "main",
+    "migrations",
+    "models",
+    "routers",
+    "schemas",
+    "services",
+    "settings",
+    "tasks",
+    "tests",
+]
 
 [tool.mypy]
 python_version = "3.11"

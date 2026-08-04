@@ -1,0 +1,5 @@
+# Gateway dependencies.
+# knowledgeos-core provides FastAPI, httpx, redis, structlog, python-jose and uvicorn.
+
+# JWKS verification uses RSA primitives from python-jose's cryptography backend.
+cryptography>=44.0.0

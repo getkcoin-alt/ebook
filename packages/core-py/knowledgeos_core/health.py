@@ -46,6 +46,18 @@ class HealthState:
         if not required:
             self._optional.add(name)
 
+    def mark_starting(self) -> None:
+        """Reset lifecycle state at the beginning of a startup.
+
+        A process normally starts once, but the app object can be started again in
+        the same interpreter — most obviously in a test suite that reuses a
+        module-level ``app``. Without clearing ``shutting_down`` here, the first
+        shutdown latches it and every later readiness probe reports "draining".
+        """
+        self.shutting_down = False
+        self.startup_complete = False
+        self.started_at = time.time()
+
     def mark_started(self) -> None:
         self.startup_complete = True
         logger.info("service.startup_complete", boot_seconds=round(self.uptime, 3))

@@ -134,6 +134,8 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         started = time.perf_counter()
+        # Clear any state left by a previous run of this same app object.
+        health_state.mark_starting()
         logger.info(
             "service.starting",
             service=settings.service_name,

@@ -171,6 +171,30 @@ async def test_expiring_a_stale_order_returns_its_coupon(
     assert coupon.usage_count == 0
 
 
+async def test_the_order_cursor_actually_advances(session, services, order_factory):
+    """The shape of test that catches a keyset cursor matching every row.
+
+    A cursor whose bound value has a different representation from the stored
+    column returns page one forever — and every other assertion about paging still
+    passes, because page one is a valid page.
+    """
+    for _ in range(5):
+        await order_factory(user_id=READER_ID)
+
+    first, cursor, has_more = await services["orders"].list_for_user(
+        session, user_id=READER_ID, limit=2
+    )
+    assert len(first) == 2
+    assert has_more is True
+    assert cursor is not None
+
+    second, _cursor, _more = await services["orders"].list_for_user(
+        session, user_id=READER_ID, limit=2, cursor=cursor
+    )
+    assert len(second) == 2
+    assert {order.id for order in first}.isdisjoint({order.id for order in second})
+
+
 async def test_another_users_order_is_a_404_not_a_403(session, services, order_factory):
     """A 403 would confirm the order exists, turning the endpoint into an oracle."""
     order = await order_factory(user_id=READER_ID)

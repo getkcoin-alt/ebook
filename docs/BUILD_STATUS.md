@@ -12,15 +12,16 @@ Last updated: 2026-08-04
 |---|---|
 | Foundation (`packages/core-py`) | ✅ Complete · 63 tests |
 | Auth service | ✅ Complete · 76 tests |
-| API gateway | ✅ Complete · 39 tests |
+| API gateway | ✅ Complete · 42 tests |
 | Book service | ✅ Complete · 48 tests · 46 endpoints |
 | Payment service | ✅ Complete · 154 tests · 42 endpoints |
 | Search service | ✅ Complete · 96 tests · 14 endpoints |
-| AI · Notifications · Automation · Workers · Admin | ⬜ Not started |
+| Notification service | ✅ Complete · 69 tests · 28 endpoints |
+| AI · Automation · Workers · Admin | ⬜ Not started |
 | Frontend | 🟡 `types` + `config` packages only |
 | Infrastructure, CI, docs | ✅ Complete |
 
-**476 tests passing.** Ruff clean across everything committed.
+**548 tests passing.** Ruff clean across everything committed.
 
 ---
 
@@ -138,11 +139,36 @@ request body and response mapping under test is the real one.
 
 Migration verified: upgrade, `alembic check` (no drift), downgrade.
 
+## ✅ Notification service — `apps/notifications`
+
+69 tests, 28 endpoints, 8 tables. Email, SMS, WhatsApp, push and in-app messages
+with stored templates, per-category preferences, delivery tracking, retries and
+suppression.
+
+Driven by **events, not callers**: a user registers, an order is paid, a refund is
+issued, and this service decides those facts deserve a message. The auth service does
+not know what a welcome email says and the payment service does not know a receipt
+exists — otherwise changing a subject line is a five-service deploy.
+
+One rule outranks everything: **an address on the suppression list is never contacted
+again**, transactional or not. Mailing an address that issued a spam complaint costs
+the sending domain its reputation, and that takes password resets down with it.
+Removal is an operator action, never automatic.
+
+Rendering is `{{name}}` substitution and nothing else — templates are editable
+through the admin API, so a template language with arbitrary evaluation would be
+remote code execution behind an admin token. Missing variables abort the send: a
+customer receiving `Hi {{first_name}},` is an apology, a 422 is a bug report.
+
+A permanent failure is never retried — the receiving server already said the mailbox
+does not exist, and asking again looks like a dictionary attack.
+
+Migration verified: upgrade, `alembic check` (no drift), downgrade.
+
 ## ⬜ Not yet started
 
-AI, notifications, automation, workers, admin, and the frontend application. Their
-directories exist; `apps/frontend` is empty apart from the shared `types` and
-`config` packages.
+AI, automation, workers, admin, and the frontend application. Their directories
+exist; `apps/frontend` is empty apart from the shared `types` and `config` packages.
 
 ---
 
@@ -151,9 +177,9 @@ directories exist; `apps/frontend` is empty apart from the shared `types` and
 Being precise about this matters more than a green checkmark.
 
 **Verified — actually executed:**
-- All 476 tests, on every commit
+- All 548 tests, on every commit
 - `ruff check` and `ruff format --check`
-- Auth, books, payment and search migrations: upgrade, `alembic check` (no drift), downgrade
+- Auth, books, payment, search and notification migrations: upgrade, `alembic check` (no drift), downgrade
 - The auth service booting in `production` mode with real generated keys
 - `scripts/generate-keys.sh` output loading through the real key ring and signing a
   token that verifies
@@ -221,6 +247,24 @@ API that did not exist, with no test on the route:
     have stopped after one page — an index silently containing only the newest few
     hundred books. `/internal/authors` and `/internal/categories` did not exist at
     all. All three now return `InternalPage` with a `next_cursor`.
+
+Two more, from the notification work, both in `core-py` and both affecting every
+service:
+
+12. **A keyset cursor matched every row on SQLite.** `TimestampMixin.created_at` was
+    written by the database clock (`CURRENT_TIMESTAMP`, no microseconds) but compared
+    against Python datetimes (with microseconds). SQLite compares timestamps as
+    strings, so the stored value sorted before every bound value and
+    `WHERE created_at < :cursor` returned page one forever. Postgres compares real
+    timestamps and is unaffected — which is exactly why it was invisible until a
+    paging test ran against the dialect the whole suite uses. Fixed with a
+    client-side default alongside the server default; books, payment, search and
+    notifications all share the mixin, and payment now has a test that fails without
+    the fix.
+13. **`use_enum_values` bit for the third time**, here on a request field that arrives
+    as a string when sent and as an enum when defaulted — so `channel is
+    NotificationChannel.EMAIL` silently never matched, which looks exactly like
+    "email is disabled".
 
 And one design bug caught before it shipped: the gateway cached `/v1/search` for 60
 seconds. A cached hit never reaches the search service, so a popular query would be

@@ -1,0 +1,13 @@
+# Notification service dependencies.
+# knowledgeos-core provides FastAPI, SQLAlchemy, Redis, httpx, structlog and uvicorn.
+
+# Alembic migrations run through a blocking driver.
+psycopg[binary]>=3.2.3
+
+# Async SMTP. Only needed when EMAIL_PROVIDER=smtp; the console and Resend
+# providers do not import it, and the SMTP provider reports a clear error rather
+# than crashing if it is absent.
+aiosmtplib>=3.0.2
+
+# EmailStr validation on template and suppression payloads.
+email-validator>=2.2.0

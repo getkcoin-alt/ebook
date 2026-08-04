@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from sqlalchemy import DateTime, MetaData, Uuid, func, text
@@ -78,16 +78,43 @@ class UUIDPrimaryKeyMixin:
     id: Mapped[uuid.UUID] = mapped_column(UUIDType, primary_key=True, default=uuid.uuid4)
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 class TimestampMixin:
-    """``created_at`` / ``updated_at`` maintained by the database clock."""
+    """``created_at`` / ``updated_at``.
+
+    Both carry a **client-side default as well as a server default**. The server
+    default is the safety net for rows written outside the ORM (a migration, a
+    manual fix); the client-side default is what the ORM actually uses, and it is
+    there for two reasons:
+
+    * The value exists on the object before it is flushed, so an event payload or
+      a response can carry it inside the same transaction that created the row —
+      the same rationale as generating UUID primary keys in Python.
+    * It makes the stored representation match the one later comparisons bind.
+      SQLite stores ``CURRENT_TIMESTAMP`` as ``2026-08-04 21:05:24`` and binds a
+      Python datetime as ``2026-08-04 21:05:24.000000``; since SQLite compares
+      timestamps as strings, the stored value sorts *before* every bound value and
+      a keyset cursor (``WHERE created_at < :cursor``) matches every row —
+      returning page one forever. Postgres compares real timestamps and is
+      unaffected, which is exactly why this was invisible until a paging test ran
+      against the dialect the whole test suite uses.
+    """
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+        DateTime(timezone=True),
+        default=_utc_now,
+        server_default=func.now(),
+        nullable=False,
+        index=True,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
+        default=_utc_now,
+        onupdate=_utc_now,
         server_default=func.now(),
-        onupdate=func.now(),
         nullable=False,
     )
 

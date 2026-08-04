@@ -187,7 +187,19 @@ ROUTES: tuple[Route, ...] = (
     Route("/v1/invoices", "payment", require_auth=True),
     Route("/v1/affiliate", "payment", require_auth=True),
     # ---- everything else -------------------------------------------------
-    Route("/v1/notifications", "notification", require_auth=True),
+    # The bell polls the unread count constantly; never cached, because a badge
+    # that lags by even 30 seconds reads as broken.
+    Route("/v1/notifications", "notification", require_auth=True, cache_ttl=0),
+    # Reached from an email footer by someone who may not be signed in. The signed
+    # token in the body is what authenticates it.
+    Route(
+        "/v1/notifications/unsubscribe",
+        "notification",
+        public=True,
+        rate_limit="anonymous",
+        anonymous_rate_limit="anonymous",
+    ),
+    Route("/v1/notifications/channels", "notification", public=True, cache_ttl=300),
     Route("/v1/automation", "automation", require_auth=True, timeout=60),
     # `/v1/admin` is a shared prefix: the admin service owns it in general, but
     # each service serves the admin surface for the data it owns. Longest-prefix
@@ -204,6 +216,7 @@ ROUTES: tuple[Route, ...] = (
     # A reindex can run for minutes, so it gets a much longer budget than the
     # default admin route.
     Route("/v1/admin/search", "search", require_auth=True, timeout=300),
+    Route("/v1/admin/notifications", "notification", require_auth=True, timeout=60),
 )
 
 

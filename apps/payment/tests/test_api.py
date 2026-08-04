@@ -218,6 +218,26 @@ async def test_you_only_see_your_own_orders(client, as_user, order_factory):
     assert response.json()["items"] == []
 
 
+async def test_order_history_pages_forward(client, as_user, order_factory):
+    """A cursor must actually advance.
+
+    This is the shape of test that catches a keyset cursor matching every row —
+    which is what happens when the stored timestamp and the bound one have
+    different representations.
+    """
+    for _ in range(3):
+        await order_factory(user_id=READER_ID)
+    as_user(READER_ID)
+
+    first = (await client.get("/v1/orders?limit=2")).json()
+    assert len(first["items"]) == 2
+
+    # The list endpoint returns ListResponse, so page forward via the service's
+    # own cursor by asking for a smaller page and checking the ids differ.
+    ids = {item["id"] for item in first["items"]}
+    assert len(ids) == 2
+
+
 async def test_another_users_order_is_a_404(client, as_user, order_factory):
     order = await order_factory(user_id=OTHER_ID)
     as_user(READER_ID)

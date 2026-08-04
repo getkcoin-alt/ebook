@@ -73,9 +73,13 @@ def _decode_order_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
         last_id = uuid.UUID(str(data["id"]))
     except (KeyError, ValueError) as exc:
         raise BadRequestError("The pagination cursor is malformed.") from exc
-    # SQLite returns naive datetimes, so an aware cursor value would fail to compare.
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=UTC)
+    # Deliberately *not* normalised to UTC. The value was produced by
+    # `.isoformat()` on whatever the database returned, so it already matches that
+    # dialect's representation — Postgres gives an aware datetime, SQLite a naive
+    # one. Forcing tzinfo on makes the bound render as "...+00:00" while the stored
+    # column has no offset, and on SQLite (which compares timestamps as strings)
+    # the shorter stored value then sorts *before* every bound: the `<` matches
+    # every row and the cursor returns page one forever.
     return created_at, last_id
 
 

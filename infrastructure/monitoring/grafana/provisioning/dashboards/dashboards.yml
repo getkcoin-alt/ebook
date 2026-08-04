@@ -1,0 +1,15 @@
+apiVersion: 1
+
+providers:
+  - name: KnowledgeOS
+    orgId: 1
+    folder: KnowledgeOS
+    type: file
+    disableDeletion: false
+    # Dashboards are provisioned from files, so they are version-controlled rather
+    # than edited in the UI and lost on the next container restart.
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

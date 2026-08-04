@@ -1,0 +1,56 @@
+# Prometheus scrape configuration.
+#
+# Every KnowledgeOS service exposes /metrics via knowledgeos_core, with a `service`
+# label on every series — so one datasource charts the whole platform and a single
+# dashboard variable switches between services.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    platform: knowledgeos
+    environment: ${ENVIRONMENT:-local}
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []  # wire to Alertmanager or Grafana's built-in alerting
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Local development: services run on the host, so `host.docker.internal` reaches
+  # them from inside the Prometheus container.
+  #
+  # On Railway, replace these with the private DNS names, e.g.
+  #   - targets: ["gateway.railway.internal:8000"]
+  - job_name: knowledgeos-services
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+        labels: { service: gateway }
+      - targets: ["host.docker.internal:8001"]
+        labels: { service: auth }
+      - targets: ["host.docker.internal:8002"]
+        labels: { service: books }
+      - targets: ["host.docker.internal:8003"]
+        labels: { service: search }
+      - targets: ["host.docker.internal:8004"]
+        labels: { service: ai }
+      - targets: ["host.docker.internal:8005"]
+        labels: { service: payment }
+      - targets: ["host.docker.internal:8006"]
+        labels: { service: notifications }
+      - targets: ["host.docker.internal:8007"]
+        labels: { service: automation }
+      - targets: ["host.docker.internal:8008"]
+        labels: { service: admin }
+    # A service that is simply not running locally should not spam the log.
+    honor_labels: true

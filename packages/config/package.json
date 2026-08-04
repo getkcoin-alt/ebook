@@ -1,0 +1,40 @@
+{
+  "name": "@knowledgeos/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared ESLint flat config, Tailwind preset (design tokens) and TypeScript bases.",
+  "exports": {
+    "./eslint/base": "./eslint/base.mjs",
+    "./eslint/react": "./eslint/react.mjs",
+    "./eslint/next": "./eslint/next.mjs",
+    "./tailwind/preset": "./tailwind/preset.mjs",
+    "./tsconfig/base.json": "./tsconfig/base.json",
+    "./tsconfig/library.json": "./tsconfig/library.json",
+    "./tsconfig/nextjs.json": "./tsconfig/nextjs.json"
+  },
+  "files": ["eslint", "tailwind", "tsconfig"],
+  "scripts": {
+    "build": "node --input-type=module -e \"await import('./eslint/next.mjs'); await import('./tailwind/preset.mjs');\"",
+    "typecheck": "node --input-type=module -e \"await import('./eslint/next.mjs');\"",
+    "lint": "node --input-type=module -e \"await import('./eslint/base.mjs');\"",
+    "clean": "rm -rf node_modules .turbo"
+  },
+  "dependencies": {
+    "@eslint/js": "^9.39.0",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^16.5.0",
+    "typescript-eslint": "^8.66.0"
+  },
+  "peerDependencies": {
+    "eslint": "^9.0.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.7.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.0",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.7.2"
+  }
+}

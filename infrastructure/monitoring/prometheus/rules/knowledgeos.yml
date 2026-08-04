@@ -1,0 +1,139 @@
+# Alerting rules.
+#
+# Design principle: **alert on symptoms users feel, not on causes.** High CPU is not
+# an incident; a checkout that returns 500 is. Every alert here should be actionable
+# — if the on-call response is "acknowledge and ignore", the rule is noise and should
+# be deleted rather than tuned down.
+#
+# `for:` durations are deliberately long enough to survive a deploy.
+
+groups:
+  # ---------------------------------------------------------------------------
+  - name: availability
+    rules:
+      - alert: ServiceDown
+        expr: up{job="knowledgeos-services"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.service }} is not responding to scrapes"
+          description: >-
+            Prometheus has been unable to scrape {{ $labels.service }} for 2 minutes.
+            Check the Railway deploy log and the container's liveness probe.
+
+      - alert: ServiceNotReady
+        # Readiness failing while the process is alive means a dependency is down.
+        expr: |
+          up{job="knowledgeos-services"} == 1
+          and on(service) knowledgeos_service_info == 1
+          and on(service) (
+            rate(knowledgeos_http_requests_total{status="503"}[5m]) > 0.5
+          )
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.service }} is returning sustained 503s"
+          description: "A dependency (Postgres, Redis, storage) is likely unavailable."
+
+  # ---------------------------------------------------------------------------
+  - name: latency-and-errors
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum by (service) (rate(knowledgeos_http_requests_total{status=~"5.."}[5m]))
+          /
+          sum by (service) (rate(knowledgeos_http_requests_total[5m]))
+          > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.service }} is failing >5% of requests"
+          description: "5xx rate is {{ $value | humanizePercentage }} over 5 minutes."
+
+      - alert: HighLatency
+        # p95, not mean: a mean hides the tail that users actually experience.
+        expr: |
+          histogram_quantile(0.95,
+            sum by (service, le) (rate(knowledgeos_http_request_duration_seconds_bucket[5m]))
+          ) > 2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.service }} p95 latency above 2s"
+          description: "p95 is {{ $value | humanizeDuration }}."
+
+      - alert: CheckoutFailing
+        # Revenue-critical path gets a tighter threshold than everything else.
+        expr: |
+          sum(rate(knowledgeos_payment_events_total{outcome="failure"}[10m]))
+          /
+          clamp_min(sum(rate(knowledgeos_payment_events_total[10m])), 0.001)
+          > 0.1
+        for: 5m
+        labels: { severity: critical, page: "true" }
+        annotations:
+          summary: "More than 10% of payment attempts are failing"
+          description: >-
+            Check the provider status page, then the payment service logs for
+            signature-verification failures.
+
+  # ---------------------------------------------------------------------------
+  - name: background-work
+    rules:
+      - alert: QueueBacklogGrowing
+        # The correct signal for scaling workers: a worker blocked on an LLM call
+        # looks idle by CPU while the backlog grows.
+        expr: knowledgeos_queue_depth > 1000
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Queue {{ $labels.queue }} has {{ $value }} pending jobs"
+          description: "Scale worker replicas, or investigate a stuck task."
+
+      - alert: DeadLetterSpike
+        expr: increase(knowledgeos_dead_letter_total[1h]) > 10
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.task }} sent {{ $value }} jobs to the DLQ in an hour"
+          description: >-
+            These jobs exhausted every retry. Inspect kos:events:dead / the
+            automation_jobs table before replaying.
+
+      - alert: CircuitBreakerOpen
+        expr: knowledgeos_circuit_breaker_state == 2
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.service }} has opened its circuit to {{ $labels.upstream }}"
+          description: "Calls are failing fast. The upstream has been failing repeatedly."
+
+  # ---------------------------------------------------------------------------
+  - name: security-and-cost
+    rules:
+      - alert: AuthFailureSpike
+        # A credential-stuffing run looks exactly like this.
+        expr: |
+          sum(rate(knowledgeos_auth_events_total{event="login", outcome="failure"}[5m])) > 10
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Elevated failed-login rate ({{ $value | printf \"%.1f\" }}/s)"
+          description: "Possible credential stuffing. Check source IPs and consider tightening the login policy."
+
+      - alert: RateLimitSaturation
+        expr: sum by (service, scope) (rate(knowledgeos_rate_limit_rejections_total[5m])) > 5
+        for: 10m
+        labels: { severity: info }
+        annotations:
+          summary: "Sustained rate-limit rejections on {{ $labels.scope }}"
+          description: "Either an abusive client, or the limit is set too low for legitimate use."
+
+      - alert: AISpendHigh
+        # LLM cost is the one line item that can run away silently overnight.
+        expr: increase(knowledgeos_ai_cost_usd_total[24h]) > 50
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "AI spend is ${{ $value | printf \"%.2f\" }} in the last 24h"
+          description: "Check the automation backlog and AI_MONTHLY_BUDGET_USD."

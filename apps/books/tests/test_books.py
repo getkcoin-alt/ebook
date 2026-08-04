@@ -405,6 +405,113 @@ class TestInternalRoutes:
         assert response.json()["owned_book_ids"] == [str(owned.id)]
 
 
+class TestTaxonomyListings:
+    """Regression: these three routers called a service signature that does not
+    exist, so every list endpoint was a 500. Nothing covered them."""
+
+    async def test_authors_are_listable(self, client, session):
+        from models import Author
+
+        session.add(Author(name="Ada Lovelace", slug="ada-lovelace"))
+        await session.commit()
+
+        response = await client.get("/v1/authors")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["items"][0]["name"] == "Ada Lovelace"
+        assert body["meta"]["total"] == 1
+
+    async def test_authors_can_be_searched(self, client, session):
+        from models import Author
+
+        session.add_all(
+            [Author(name="Ada Lovelace", slug="ada"), Author(name="Alan Turing", slug="alan")]
+        )
+        await session.commit()
+
+        body = (await client.get("/v1/authors?q=Turing")).json()
+        assert [author["name"] for author in body["items"]] == ["Alan Turing"]
+
+    async def test_publishers_are_listable(self, client, session):
+        from models import Publisher
+
+        session.add(Publisher(name="KnowledgeOS Press", slug="kos-press"))
+        await session.commit()
+
+        response = await client.get("/v1/publishers")
+        assert response.status_code == 200
+        assert response.json()["meta"]["total"] == 1
+
+    async def test_categories_are_listable(self, client, session):
+        from models import Category
+
+        session.add(Category(name="Fiction", slug="fiction"))
+        await session.commit()
+
+        response = await client.get("/v1/categories")
+        assert response.status_code == 200
+        assert response.json()["items"][0]["slug"] == "fiction"
+
+    async def test_listings_paginate(self, client, session):
+        from models import Author
+
+        session.add_all([Author(name=f"Author {n}", slug=f"a{n}") for n in range(5)])
+        await session.commit()
+
+        first = (await client.get("/v1/authors?page=1&limit=2")).json()
+        assert len(first["items"]) == 2
+        assert first["meta"]["pages"] == 3
+
+        last = (await client.get("/v1/authors?page=3&limit=2")).json()
+        assert len(last["items"]) == 1
+
+
+class TestInternalListings:
+    """The search service reconciles its index by walking these."""
+
+    async def test_the_book_listing_returns_a_cursor(self, client, book_factory, as_internal):
+        """A response without one stops the reconciler after a single page, and the
+        symptom is an index that only ever holds the newest few hundred books."""
+        for _ in range(3):
+            await book_factory()
+        as_internal()
+
+        first = (await client.get("/internal/books?limit=2")).json()
+        assert len(first["items"]) == 2
+        assert first["next_cursor"]
+
+        second = (await client.get(f"/internal/books?limit=2&cursor={first['next_cursor']}")).json()
+        assert len(second["items"]) == 1
+        assert second["next_cursor"] is None
+
+    async def test_the_book_listing_carries_the_fields_the_indexer_needs(
+        self, client, book_factory, as_internal
+    ):
+        """A card-sized projection is missing the description, tags and formats the
+        search document is built from."""
+        await book_factory(description="Full text here.")
+        as_internal()
+
+        item = (await client.get("/internal/books")).json()["items"][0]
+        assert item["description"] == "Full text here."
+        assert "effective_price_minor" in item
+        assert "ai_tags" in item
+
+    async def test_authors_and_categories_are_walkable(self, client, session, as_internal):
+        from models import Author, Category
+
+        session.add(Author(name="Ada Lovelace", slug="ada-lovelace"))
+        session.add(Category(name="Fiction", slug="fiction"))
+        await session.commit()
+        as_internal()
+
+        authors = (await client.get("/internal/authors")).json()
+        categories = (await client.get("/internal/categories")).json()
+        assert authors["items"][0]["slug"] == "ada-lovelace"
+        assert authors["next_cursor"] is None  # single page
+        assert categories["items"][0]["slug"] == "fiction"
+
+
 class TestUploads:
     async def test_an_admin_can_mint_an_upload_target(self, client, as_admin):
         """Regression: `category` is a required enum field, so use_enum_values has

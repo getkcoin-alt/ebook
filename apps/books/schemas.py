@@ -13,6 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
@@ -653,6 +654,19 @@ class InternalPublishRequest(BaseSchema):
     #: Automation calls this when a generated book clears its pipeline.
     reason: str | None = Field(default=None, max_length=255)
     published_at: datetime | None = None
+
+
+class InternalPage(BaseSchema):
+    """The shape every ``/internal`` listing returns.
+
+    ``next_cursor`` is the load-bearing field: the search service's reconciler
+    follows it until it is null. A response without one stops the walk after a
+    single page, and the symptom is an index that silently only ever contains the
+    first two hundred books.
+    """
+
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    next_cursor: str | None = None
 
 
 class OwnedBooksRequest(BaseSchema):

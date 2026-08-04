@@ -30,6 +30,9 @@ from schemas import (
     SearchHighlights,
     SearchResponse,
     SortOption,
+    Suggestion,
+    SuggestionKind,
+    SuggestResponse,
 )
 from services.documents import PRICE_BUCKET_LABELS
 from services.indexes import BOOK_FILTERABLE_ATTRIBUTES
@@ -114,6 +117,16 @@ class SearchBackend(Protocol):
         """Run a prepared query body and return Meilisearch-shaped results."""
         ...
 
+    def uses_semantic(self, params: SearchParams) -> bool:
+        """Whether this backend will answer ``params`` with vectors.
+
+        Asked by the query service so the response can say so honestly. It cannot
+        be inferred from the body the service built, because a backend is free to
+        rewrite that body — and the keyword backend does exactly that when it adds
+        its hybrid block.
+        """
+        ...
+
 
 class KeywordBackend:
     """The default: Meilisearch's lexical index, optionally hybrid.
@@ -128,11 +141,16 @@ class KeywordBackend:
         self._settings = settings
         self._meili = meili
 
-    async def execute(self, params: SearchParams, body: dict[str, Any]) -> dict[str, Any]:
-        use_semantic = (
+    def uses_semantic(self, params: SearchParams) -> bool:
+        requested = (
             params.semantic if params.semantic is not None else self._settings.semantic_enabled
         )
-        if use_semantic and self._settings.semantic_enabled:
+        # A request may opt in, but a deployment with no embedder configured cannot
+        # honour it — and must not claim to have.
+        return bool(requested and self._settings.semantic_enabled)
+
+    async def execute(self, params: SearchParams, body: dict[str, Any]) -> dict[str, Any]:
+        if self.uses_semantic(params):
             body = {
                 **body,
                 "hybrid": {
@@ -247,10 +265,10 @@ class QueryService:
         offset = self._offset(params.cursor)
         next_cursor = encode_cursor({"o": offset + limit}) if has_more else None
 
-        took_ms = int(raw.get("processingTimeMs", 0)) or int(
-            (time.perf_counter() - started) * 1000
-        )
-        semantic_used = "hybrid" in body
+        took_ms = int(raw.get("processingTimeMs", 0)) or int((time.perf_counter() - started) * 1000)
+        # Asked of the backend, not inferred from `body`: the backend rewrites the
+        # body it was handed, so this copy never carries the hybrid block.
+        semantic_used = self._backend.uses_semantic(params)
 
         return SearchResponse(
             query=params.query,
@@ -262,6 +280,98 @@ class QueryService:
             has_more=has_more,
             did_you_mean=None,
             semantic=semantic_used,
+        )
+
+    async def suggest(self, query: str, limit: int | None = None) -> SuggestResponse:
+        """Autocomplete across books, authors and categories.
+
+        One ``multi-search`` round trip rather than three sequential queries: this
+        runs on every keystroke, so three round trips would be three times the
+        latency at exactly the moment the user is watching.
+
+        Results are interleaved by kind rather than merged by score. Meilisearch
+        scores are only comparable *within* one index — a 0.9 from the authors
+        index and a 0.9 from the books index do not mean the same thing — so a
+        global sort by score would produce a confidently wrong ordering.
+        """
+        started = time.perf_counter()
+        text = (query or "").strip()
+        if not text:
+            return SuggestResponse(query="", suggestions=[], took_ms=0)
+
+        limit = max(1, min(limit or self._settings.autocomplete_limit, 20))
+        # Books get half the slots, authors and categories a quarter each: a reader
+        # typing into a book store is usually looking for a book.
+        book_slots = max(1, limit // 2)
+        other_slots = max(1, (limit - book_slots) // 2)
+
+        results = await self._meili.multi_search(
+            [
+                {
+                    "indexUid": self._settings.books_index,
+                    "q": text,
+                    "limit": book_slots,
+                    "filter": ['status = "published"'],
+                    "attributesToRetrieve": [
+                        "id",
+                        "slug",
+                        "title",
+                        "thumbnail_key",
+                        "author_names",
+                    ],
+                },
+                {
+                    "indexUid": self._settings.authors_index,
+                    "q": text,
+                    "limit": other_slots,
+                    "attributesToRetrieve": ["id", "slug", "name", "book_count"],
+                },
+                {
+                    "indexUid": self._settings.categories_index,
+                    "q": text,
+                    "limit": other_slots,
+                    "attributesToRetrieve": ["id", "slug", "name", "book_count"],
+                },
+            ]
+        )
+
+        by_index = {str(result.get("indexUid")): result.get("hits", []) for result in results}
+        suggestions: list[Suggestion] = []
+
+        for hit in by_index.get(self._settings.books_index, []):
+            authors = [str(name) for name in (hit.get("author_names") or [])][:2]
+            suggestions.append(
+                Suggestion(
+                    text=str(hit.get("title", "")),
+                    kind=SuggestionKind.BOOK,
+                    href=f"/books/{hit.get('slug', '')}",
+                    subtitle=", ".join(authors) or None,
+                    image_url=hit.get("thumbnail_key"),
+                )
+            )
+        for hit in by_index.get(self._settings.authors_index, []):
+            count = hit.get("book_count")
+            suggestions.append(
+                Suggestion(
+                    text=str(hit.get("name", "")),
+                    kind=SuggestionKind.AUTHOR,
+                    href=f"/authors/{hit.get('slug', '')}",
+                    subtitle=f"{count} books" if count else None,
+                )
+            )
+        for hit in by_index.get(self._settings.categories_index, []):
+            suggestions.append(
+                Suggestion(
+                    text=str(hit.get("name", "")),
+                    kind=SuggestionKind.CATEGORY,
+                    href=f"/categories/{hit.get('slug', '')}",
+                )
+            )
+
+        return SuggestResponse(
+            query=text,
+            suggestions=[s for s in suggestions if s.text][:limit],
+            took_ms=int((time.perf_counter() - started) * 1000),
         )
 
     async def related(self, book_id: str, limit: int) -> tuple[str, list[BookHit]]:
@@ -328,6 +438,8 @@ def to_hit(raw: dict[str, Any]) -> BookHit:
         rating_count=int(raw.get("rating_count") or 0),
         review_count=int(raw.get("review_count") or 0),
         cover_url=raw.get("cover_url"),
+        cover_key=raw.get("cover_key"),
+        thumbnail_key=raw.get("thumbnail_key"),
         published_at=raw.get("published_at"),
         score=raw.get("_rankingScore"),
         highlights=SearchHighlights(

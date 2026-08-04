@@ -12,15 +12,15 @@ Last updated: 2026-08-04
 |---|---|
 | Foundation (`packages/core-py`) | ✅ Complete · 63 tests |
 | Auth service | ✅ Complete · 76 tests |
-| API gateway | ✅ Complete · 38 tests |
-| Book service | ✅ Complete · 40 tests · 43 endpoints |
+| API gateway | ✅ Complete · 39 tests |
+| Book service | ✅ Complete · 48 tests · 46 endpoints |
 | Payment service | ✅ Complete · 154 tests · 42 endpoints |
-| Search | 🟡 Models, schemas and service layer; no routers or tests yet |
+| Search service | ✅ Complete · 96 tests · 14 endpoints |
 | AI · Notifications · Automation · Workers · Admin | ⬜ Not started |
 | Frontend | 🟡 `types` + `config` packages only |
 | Infrastructure, CI, docs | ✅ Complete |
 
-**371 tests passing.** Ruff clean across everything committed.
+**476 tests passing.** Ruff clean across everything committed.
 
 ---
 
@@ -71,7 +71,7 @@ OpenAPI.
 
 ## ✅ Book service — `apps/books`
 
-40 tests, 43 endpoints, 17 tables. Catalogue with cursor pagination and facets,
+48 tests, 46 endpoints, 17 tables. Catalogue with cursor pagination and facets,
 authors/publishers/categories, reviews with moderation, bookmarks, reading progress,
 wishlists and collections. Downloads are gated on an **entitlement row** — checked
 before a presigned URL is minted, never after.
@@ -111,11 +111,32 @@ consecutive serial within the Indian financial year, as the law requires.
 
 Migration verified: upgrade, `alembic check` (no drift), downgrade.
 
-## 🟡 Search service — `apps/search`
+## ✅ Search service — `apps/search`
 
-Models, schemas and the service layer (Meilisearch client, indexer, query builder,
-trending) exist. Routers, `main.py`, migrations and tests are not written, so it does
-not run yet.
+96 tests, 14 endpoints, 4 tables. Full-text search with facets and cursor
+pagination, autocomplete across three indexes in one round trip, related books,
+time-decayed trending, and search analytics.
+
+**The index is a cache.** Every document can be rebuilt from the books service, so
+the `search` schema holds only the index ledger and analytics — nothing
+authoritative. **A search outage is not a platform outage**: Meilisearch being down
+produces clean 503s on the query path and nothing else, and index setup at boot is
+best-effort so a dead engine cannot stop the service from starting.
+
+Filters, sorts and page depth are validated against closed sets *before* reaching the
+engine, so a crafted query is a 400 from us rather than a 400 from Meilisearch
+surfacing as a 500. `status = "published"` is appended unconditionally.
+`assert_filters_are_indexable()` runs at startup and fails fast if the API accepts a
+filter the index never declared filterable.
+
+Semantic search is a config flip behind a `SearchBackend` seam and is off by default;
+a request that opts in without a configured embedder gets keyword results and an
+honest `semantic: false`.
+
+Meilisearch is faked at the **HTTP transport** in tests, not at the client, so every
+request body and response mapping under test is the real one.
+
+Migration verified: upgrade, `alembic check` (no drift), downgrade.
 
 ## ⬜ Not yet started
 
@@ -130,9 +151,9 @@ directories exist; `apps/frontend` is empty apart from the shared `types` and
 Being precise about this matters more than a green checkmark.
 
 **Verified — actually executed:**
-- All 371 tests, on every commit
+- All 476 tests, on every commit
 - `ruff check` and `ruff format --check`
-- Auth, books and payment migrations: upgrade, `alembic check` (no drift), downgrade
+- Auth, books, payment and search migrations: upgrade, `alembic check` (no drift), downgrade
 - The auth service booting in `production` mode with real generated keys
 - `scripts/generate-keys.sh` output loading through the real key ring and signing a
   token that verifies
@@ -187,3 +208,22 @@ Each was found by a service failing against it, not by inspection:
    someone passed the field explicitly. This was a live 500 on the books upload
    endpoint, found while building payment. The trap is now documented on `BaseSchema`
    itself and there is a regression test.
+
+Two more, found while building search — both from writing a router against a service
+API that did not exist, with no test on the route:
+
+10. **Every taxonomy list endpoint was a 500.** `/v1/authors`, `/v1/publishers` and
+    `/v1/categories` called `list_*(session, q=..., cursor=..., limit=...)` while the
+    service takes `params: PageParams` and returns a 2-tuple. Nothing covered those
+    routes. They now use offset paging (correct for a small, near-static taxonomy)
+    and have tests.
+11. **The internal book listing returned no cursor**, so the search reconciler would
+    have stopped after one page — an index silently containing only the newest few
+    hundred books. `/internal/authors` and `/internal/categories` did not exist at
+    all. All three now return `InternalPage` with a `next_cursor`.
+
+And one design bug caught before it shipped: the gateway cached `/v1/search` for 60
+seconds. A cached hit never reaches the search service, so a popular query would be
+recorded once per TTL instead of once per search — undercounting exactly the queries
+the zero-result report exists for, and inverting the trending ranking so that *less*
+popular queries rank higher. Search is no longer cached; trending still is.

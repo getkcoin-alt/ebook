@@ -1,0 +1,9 @@
+# Search service dependencies.
+# knowledgeos-core provides FastAPI, SQLAlchemy, Redis, httpx, structlog and uvicorn.
+#
+# No meilisearch-python-sdk: this service uses a handful of Meilisearch REST calls
+# and needs precise control over timeouts (a query budget under a second, an
+# indexing budget of thirty) that a vendor client makes awkward to express.
+
+# Alembic migrations run through a blocking driver.
+psycopg[binary]>=3.2.3

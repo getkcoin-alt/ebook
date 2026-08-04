@@ -1,6 +1,12 @@
 """Authors, publishers and categories.
 
 Reads are public and cached; writes require `books:write`.
+
+These lists use **offset** pagination rather than the cursor paging the catalogue
+feed uses. Taxonomies are small, near-static and usually rendered as a complete
+alphabetical index, so a page number is what a caller actually wants — and the
+"a new row shifts every page boundary" problem that makes offsets wrong for a feed
+does not arise when a handful of authors are added a month.
 """
 
 from __future__ import annotations
@@ -10,8 +16,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
-from deps import CursorLimit, DbSession, Taxonomy
-from knowledgeos_core import ListResponse
+from deps import DbSession, Taxonomy
+from knowledgeos_core import Page, PageParams, page_params
 from knowledgeos_core.deps import rate_limit, require_permission
 from schemas import (
     AuthorCreate,
@@ -41,20 +47,23 @@ categories_router = APIRouter(prefix="/v1/categories", tags=["categories"])
 
 @authors_router.get(
     "",
-    response_model=ListResponse[AuthorOut],
+    response_model=Page[AuthorOut],
     summary="List authors",
     dependencies=[Depends(rate_limit("anonymous"))],
 )
 async def list_authors(
     session: DbSession,
     taxonomy: Taxonomy,
-    limit: CursorLimit,
+    params: Annotated[PageParams, Depends(page_params)],
     q: Annotated[str | None, Query(max_length=120)] = None,
-    cursor: Annotated[str | None, Query()] = None,
-) -> ListResponse[AuthorOut]:
-    rows, _cursor, _more = await taxonomy.list_authors(session, q=q, cursor=cursor, limit=limit)
-    items = [AuthorOut.model_validate(row) for row in rows]
-    return ListResponse[AuthorOut](items=items, total=len(items))
+    featured_only: Annotated[bool, Query()] = False,
+) -> Page[AuthorOut]:
+    rows, total = await taxonomy.list_authors(
+        session, params=params, search=q, featured_only=featured_only
+    )
+    return Page[AuthorOut].create(
+        [AuthorOut.model_validate(row) for row in rows], total=total, params=params
+    )
 
 
 @authors_router.get("/{slug}", response_model=AuthorOut, summary="Get an author by slug")
@@ -101,20 +110,20 @@ async def delete_author(author_id: uuid.UUID, session: DbSession, taxonomy: Taxo
 
 @publishers_router.get(
     "",
-    response_model=ListResponse[PublisherOut],
+    response_model=Page[PublisherOut],
     summary="List publishers",
     dependencies=[Depends(rate_limit("anonymous"))],
 )
 async def list_publishers(
     session: DbSession,
     taxonomy: Taxonomy,
-    limit: CursorLimit,
+    params: Annotated[PageParams, Depends(page_params)],
     q: Annotated[str | None, Query(max_length=120)] = None,
-    cursor: Annotated[str | None, Query()] = None,
-) -> ListResponse[PublisherOut]:
-    rows, _cursor, _more = await taxonomy.list_publishers(session, q=q, cursor=cursor, limit=limit)
-    items = [PublisherOut.model_validate(row) for row in rows]
-    return ListResponse[PublisherOut](items=items, total=len(items))
+) -> Page[PublisherOut]:
+    rows, total = await taxonomy.list_publishers(session, params=params, search=q)
+    return Page[PublisherOut].create(
+        [PublisherOut.model_validate(row) for row in rows], total=total, params=params
+    )
 
 
 @publishers_router.get("/{slug}", response_model=PublisherOut, summary="Get a publisher by slug")
@@ -168,22 +177,21 @@ async def delete_publisher(
 
 @categories_router.get(
     "",
-    response_model=ListResponse[CategoryOut],
+    response_model=Page[CategoryOut],
     summary="List categories (flat)",
+    description="The flat list. Use `/tree` for the hierarchy in one response.",
     dependencies=[Depends(rate_limit("anonymous"))],
 )
 async def list_categories(
     session: DbSession,
     taxonomy: Taxonomy,
-    limit: CursorLimit,
-    parent_id: Annotated[uuid.UUID | None, Query()] = None,
-    cursor: Annotated[str | None, Query()] = None,
-) -> ListResponse[CategoryOut]:
-    rows, _cursor, _more = await taxonomy.list_categories(
-        session, parent_id=parent_id, cursor=cursor, limit=limit
+    params: Annotated[PageParams, Depends(page_params)],
+    q: Annotated[str | None, Query(max_length=120)] = None,
+) -> Page[CategoryOut]:
+    rows, total = await taxonomy.list_categories(session, params=params, search=q)
+    return Page[CategoryOut].create(
+        [CategoryOut.model_validate(row) for row in rows], total=total, params=params
     )
-    items = [CategoryOut.model_validate(row) for row in rows]
-    return ListResponse[CategoryOut](items=items, total=len(items))
 
 
 @categories_router.get(

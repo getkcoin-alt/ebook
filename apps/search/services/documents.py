@@ -38,11 +38,13 @@ def price_bucket(price_minor: int) -> str:
     return "over_999"
 
 
+#: Display labels for the price facet. The en dashes are deliberate typography for
+#: a numeric range, not stray hyphens.
 PRICE_BUCKET_LABELS: dict[str, str] = {
     "free": "Free",
     "under_199": "Under ₹199",
-    "199_499": "₹199 – ₹499",
-    "499_999": "₹499 – ₹999",
+    "199_499": "₹199 – ₹499",  # noqa: RUF001
+    "499_999": "₹499 – ₹999",  # noqa: RUF001
     "over_999": "Over ₹999",
 }
 
@@ -90,6 +92,14 @@ def _people(raw: Any) -> list[dict[str, str]]:
     return people
 
 
+def _name_of(raw: Any) -> str | None:
+    """A publisher may arrive as an object or as a bare name."""
+    if isinstance(raw, Mapping):
+        name = raw.get("name")
+        return str(name) if name else None
+    return str(raw) if raw else None
+
+
 def _strings(raw: Any) -> list[str]:
     if not isinstance(raw, Iterable) or isinstance(raw, str | bytes | Mapping):
         return []
@@ -100,7 +110,17 @@ def build_book_document(book: Mapping[str, Any]) -> dict[str, Any]:
     """Render one book into its index document."""
     authors = _people(book.get("authors"))
     categories = _people(book.get("categories"))
-    price_minor = int(book.get("price_minor") or 0)
+    # The books service's own field names come first, with the flatter aliases as
+    # fallbacks so the automation pipeline can push a document it built itself.
+    #
+    # `effective_price_minor` is the catalogue's answer to "what does this cost right
+    # now" and already accounts for a discount price. Indexing `price_minor` instead
+    # would make every sale invisible to the price filter and the price facet.
+    price_minor = int(
+        book.get("effective_price_minor")
+        if book.get("effective_price_minor") is not None
+        else (book.get("price_minor") or 0)
+    )
     rating_average = book.get("rating_average")
     rating_count = int(book.get("rating_count") or 0)
     published_at = book.get("published_at")
@@ -120,14 +140,21 @@ def build_book_document(book: Mapping[str, Any]) -> dict[str, Any]:
         "category_names": [category["name"] for category in categories],
         "category_slugs": [category["slug"] for category in categories if category["slug"]],
         "category_ids": [category["id"] for category in categories if category["id"]],
-        "tags": _strings(book.get("tags")),
-        "formats": _strings(book.get("formats")),
+        "tags": _strings(book.get("ai_tags") or book.get("tags")),
+        "formats": _strings(book.get("available_formats") or book.get("formats")),
         "language": str(book.get("language") or "en"),
-        "publisher": book.get("publisher"),
-        "isbn": book.get("isbn"),
+        # The books service sends a publisher object; the index facets on a
+        # single string, so the name is what gets stored.
+        "publisher": _name_of(book.get("publisher")),
+        "isbn": book.get("isbn13") or book.get("isbn10") or book.get("isbn"),
         "price_minor": price_minor,
         "currency": str(book.get("currency") or "INR"),
-        "compare_at_price_minor": book.get("compare_at_price_minor"),
+        # The struck-through "was" price, shown next to a discounted one.
+        "compare_at_price_minor": (
+            book.get("price_minor")
+            if book.get("discount_price_minor") is not None
+            else book.get("compare_at_price_minor")
+        ),
         "is_free": price_minor == 0,
         "price_bucket": price_bucket(price_minor),
         # Meilisearch cannot filter on null with a numeric comparison, so an
@@ -136,7 +163,11 @@ def build_book_document(book: Mapping[str, Any]) -> dict[str, Any]:
         "rating_average": float(rating_average) if rating_average is not None else 0.0,
         "rating_count": rating_count,
         "review_count": int(book.get("review_count") or rating_count),
+        # Storage keys, not URLs: this service does not know the CDN base, and
+        # baking one in would make every document wrong the day it changes.
         "cover_url": book.get("cover_url"),
+        "cover_key": book.get("cover_key"),
+        "thumbnail_key": book.get("thumbnail_key"),
         "page_count": book.get("page_count"),
         "reading_minutes": book.get("reading_minutes"),
         "status": str(book.get("status") or "published"),

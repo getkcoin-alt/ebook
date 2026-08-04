@@ -124,6 +124,7 @@ STOP_WORDS: list[str] = [
     "with",
 ]
 
+
 def _bidirectional(pairs: list[tuple[str, list[str]]]) -> dict[str, list[str]]:
     """Expand curated pairs into the both-ways map Meilisearch wants."""
     table: dict[str, set[str]] = {}

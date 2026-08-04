@@ -55,6 +55,17 @@ class TestRouting:
             assert route.upstream == "payment", path
             assert route.public is True, path
 
+    async def test_search_is_not_cached_but_trending_is(self):
+        """A cached search never reaches the search service, so a popular query
+        would be counted once per TTL instead of once per search — undercounting
+        exactly the queries the zero-result report exists for, and inverting the
+        trending ranking. Trending itself is an aggregate nobody observes."""
+        from routes import resolve
+
+        assert resolve("/v1/search").cache_ttl == 0
+        assert resolve("/v1/search/suggest").cache_ttl == 0
+        assert resolve("/v1/search/trending").cache_ttl > 0
+
     async def test_webhook_paths_are_never_cached(self):
         """The payment service verifies the signature over the raw body, so nothing
         between the provider and it may alter or replay those bytes."""

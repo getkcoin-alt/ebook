@@ -82,6 +82,11 @@ class BookHit(BaseSchema):
     rating_count: int = 0
     review_count: int = 0
     cover_url: str | None = None
+    #: Storage keys rather than URLs. The search service does not know the CDN
+    #: base, and baking one into every document would make them all wrong the day
+    #: it changes — the frontend composes the URL from these.
+    cover_key: str | None = None
+    thumbnail_key: str | None = None
     published_at: datetime | None = None
     #: Meilisearch ranking score, 0-1. Only comparable inside one result set.
     score: float | None = None
@@ -119,6 +124,11 @@ class SearchResponse(BaseSchema):
     did_you_mean: str | None = None
     #: True when results came from the vector/hybrid backend.
     semantic: bool = False
+    #: Id of the recorded analytics row, echoed back so a later click can be
+    #: attributed to the search that produced it. There is no way to reconstruct
+    #: that pairing afterwards, which is why it is returned rather than looked up.
+    #: ``None`` when analytics is disabled.
+    query_id: uuid.UUID | None = None
 
 
 class Suggestion(BaseSchema):
@@ -212,7 +222,10 @@ class ReindexRequest(BaseSchema):
 
 
 class ReindexResponse(BaseSchema):
-    run_id: uuid.UUID
+    #: The `ReindexRun` row's primary key, named `run_id` on the wire because
+    #: `id` alone is ambiguous next to `index_name`. `populate_by_name` means it
+    #: can still be constructed as `run_id=...` in tests.
+    run_id: uuid.UUID = Field(validation_alias="id")
     index_name: str
     mode: str
     status: str

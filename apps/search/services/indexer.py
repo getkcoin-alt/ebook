@@ -99,9 +99,7 @@ class IndexLedger:
             )
             return False
         if content_hash and existing.checksum == content_hash and existing.deleted_at is None:
-            logger.debug(
-                "search.document_unchanged", index=self._index, document_id=document_id
-            )
+            logger.debug("search.document_unchanged", index=self._index, document_id=document_id)
             return False
         return True
 
@@ -153,7 +151,7 @@ class IndexLedger:
                 IndexedDocument.deleted_at.is_(None),
             )
         )
-        known = {row for row in result.scalars().all()}
+        known = set(result.scalars().all())
         stale = sorted(known - set(keep_ids))
         if stale:
             await session.execute(
@@ -293,9 +291,7 @@ class Indexer:
             logger.info("search.document_indexed", book_id=book_id, event_type=event.type)
             return "indexed"
 
-    async def _load_book(
-        self, book_id: str, payload: Mapping[str, Any]
-    ) -> dict[str, Any] | None:
+    async def _load_book(self, book_id: str, payload: Mapping[str, Any]) -> dict[str, Any] | None:
         """Fetch the book, falling back to the event payload.
 
         The fallback matters: if the books service is briefly unreachable but the
@@ -520,7 +516,11 @@ class Indexer:
             seen += len(documents)
             keep_ids.extend(str(doc["id"]) for doc in documents)
             added, _skipped, batch_failed = await self.index_documents(
-                index, documents, event_id=None, event_type=f"{mode}.run", force=force or mode == "full"
+                index,
+                documents,
+                event_id=None,
+                event_type=f"{mode}.run",
+                force=force or mode == "full",
             )
             indexed += added
             failed += batch_failed

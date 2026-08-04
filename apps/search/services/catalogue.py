@@ -81,9 +81,7 @@ class CatalogueGateway:
     async def iter_categories(
         self, *, max_documents: int | None = None
     ) -> AsyncIterator[list[dict[str, Any]]]:
-        async for page in self._iter_pages(
-            "/internal/categories", {}, max_documents=max_documents
-        ):
+        async for page in self._iter_pages("/internal/categories", {}, max_documents=max_documents):
             yield page
 
     async def _iter_pages(

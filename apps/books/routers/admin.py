@@ -19,10 +19,19 @@ from deps import (
     CursorLimit,
     DbSession,
     Entitlements,
+    Taxonomy,
 )
-from knowledgeos_core import EventType, ListResponse, MessageResponse, get_logger
+from knowledgeos_core import (
+    EventType,
+    MessageResponse,
+    PageParams,
+    encode_cursor,
+    get_logger,
+    page_params,
+)
 from knowledgeos_core.deps import Ctx, InternalCaller, Storage, require_permission
 from schemas import (
+    AuthorOut,
     BatchBooksRequest,
     BatchBooksResponse,
     BookAdminDetail,
@@ -33,8 +42,10 @@ from schemas import (
     BookVersionCreate,
     BookVersionOut,
     CataloguePage,
+    CategoryOut,
     EntitlementGrantIn,
     EntitlementOut,
+    InternalPage,
     InternalPublishRequest,
     OwnedBooksRequest,
     OwnedBooksResponse,
@@ -44,6 +55,20 @@ from schemas import (
 from settings import settings
 
 logger = get_logger(__name__)
+
+
+def _offset_cursor(params: PageParams, total: int) -> str | None:
+    """Present offset paging as a cursor, so every ``/internal`` listing walks the
+    same way regardless of how the underlying service pages.
+
+    Taxonomies are small and near-static, so an offset is fine for them — but the
+    reconciler should not have to know which endpoints page which way.
+    """
+    consumed = params.page * params.limit
+    if consumed >= total:
+        return None
+    return encode_cursor({"page": params.page + 1})
+
 
 WRITE = Depends(require_permission("books:write"))
 PUBLISH = Depends(require_permission("books:publish"))
@@ -410,9 +435,16 @@ async def internal_get_book(
 
 @internal_router.get(
     "/books",
-    response_model=ListResponse[BookListItem],
+    response_model=InternalPage,
     summary="Page through published books (internal)",
-    description="Used by the search service to reconcile its index against the source of truth.",
+    description=(
+        "Used by the search service to reconcile its index against the source of "
+        "truth. Follow `next_cursor` until it is null — a caller that stops after "
+        "the first page silently indexes only the newest few hundred books.\n\n"
+        "Returns the full `BookDetail` shape, because the reconciler builds index "
+        "documents from it and a card-sized projection is missing the description, "
+        "tags and formats it needs."
+    ),
 )
 async def internal_list_books(
     caller: InternalCaller,
@@ -421,9 +453,49 @@ async def internal_list_books(
     filters: CatalogueFilters,
     limit: CursorLimit,
     cursor: Annotated[str | None, Query()] = None,
-) -> ListResponse[BookListItem]:
-    rows, _cursor, _more = await catalogue.list_books(
+) -> InternalPage:
+    rows, next_cursor, _more = await catalogue.list_books(
         session, filters=filters, cursor=cursor, limit=limit, public=True
     )
-    items = [BookListItem.model_validate(row) for row in rows]
-    return ListResponse[BookListItem](items=items, total=len(items))
+    return InternalPage(
+        items=[BookDetail.model_validate(row).model_dump(mode="json") for row in rows],
+        next_cursor=next_cursor,
+    )
+
+
+@internal_router.get(
+    "/authors",
+    response_model=InternalPage,
+    summary="Page through authors (internal)",
+    description="Feeds the search service's author index.",
+)
+async def internal_list_authors(
+    caller: InternalCaller,
+    session: DbSession,
+    taxonomy: Taxonomy,
+    params: Annotated[PageParams, Depends(page_params)],
+) -> InternalPage:
+    rows, total = await taxonomy.list_authors(session, params=params)
+    return InternalPage(
+        items=[AuthorOut.model_validate(row).model_dump(mode="json") for row in rows],
+        next_cursor=_offset_cursor(params, total),
+    )
+
+
+@internal_router.get(
+    "/categories",
+    response_model=InternalPage,
+    summary="Page through categories (internal)",
+    description="Feeds the search service's category index.",
+)
+async def internal_list_categories(
+    caller: InternalCaller,
+    session: DbSession,
+    taxonomy: Taxonomy,
+    params: Annotated[PageParams, Depends(page_params)],
+) -> InternalPage:
+    rows, total = await taxonomy.list_categories(session, params=params)
+    return InternalPage(
+        items=[CategoryOut.model_validate(row).model_dump(mode="json") for row in rows],
+        next_cursor=_offset_cursor(params, total),
+    )

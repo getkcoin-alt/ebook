@@ -71,7 +71,10 @@ class MeiliClient:
         *,
         json: Any = None,
         params: dict[str, Any] | None = None,
-        timeout: float | None = None,
+        # A per-request HTTP timeout handed to httpx, not an asyncio cancellation
+        # scope: the query path and the indexing path need very different budgets
+        # against the same client.
+        timeout: float | None = None,  # noqa: ASYNC109
     ) -> Any:
         """One HTTP call, with the platform's failure semantics applied."""
         started = time.perf_counter()
@@ -111,9 +114,7 @@ class MeiliClient:
 
         if response.status_code >= 500:
             # The engine is up but broken. Same user-facing outcome as unreachable.
-            logger.warning(
-                "search.meilisearch_error", path=path, status_code=response.status_code
-            )
+            logger.warning("search.meilisearch_error", path=path, status_code=response.status_code)
             raise ServiceUnavailableError(
                 UNAVAILABLE_MESSAGE,
                 code="search_unavailable",
@@ -144,11 +145,13 @@ class MeiliClient:
     # ---- queries ---------------------------------------------------------
 
     async def search(
-        self, index: str, body: dict[str, Any], *, timeout: float | None = None
+        self,
+        index: str,
+        body: dict[str, Any],
+        *,
+        timeout: float | None = None,  # noqa: ASYNC109 - httpx budget, not a cancel scope
     ) -> dict[str, Any]:
-        result = await self.request(
-            "POST", f"/indexes/{index}/search", json=body, timeout=timeout
-        )
+        result = await self.request("POST", f"/indexes/{index}/search", json=body, timeout=timeout)
         if result is None:
             # A missing index is an empty result set, not an error: the first
             # deploy runs before the first reindex, and an empty search page is a

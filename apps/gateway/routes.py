@@ -134,14 +134,23 @@ ROUTES: tuple[Route, ...] = (
     Route("/v1/bookmarks", "books", require_auth=True),
     Route("/v1/reading-progress", "books", require_auth=True),
     # ---- search ----------------------------------------------------------
+    # Deliberately **not** cached. Caching search would break the two things the
+    # search service observes: a cached hit never reaches it, so a popular query
+    # would be counted once per TTL instead of once per search — which undercounts
+    # exactly the queries the zero-result report is for, and inverts the trending
+    # ranking so that *less* popular queries rank higher. Meilisearch answers in
+    # single-digit milliseconds; there is nothing here worth buying with that.
     Route(
         "/v1/search",
         "search",
         public=True,
         rate_limit="search",
         anonymous_rate_limit="search",
-        cache_ttl=60,
+        cache_ttl=0,
     ),
+    # Trending is a whole-platform aggregate that nobody observes, so it caches
+    # freely — and it is read on every page load.
+    Route("/v1/search/trending", "search", public=True, rate_limit="anonymous", cache_ttl=60),
     # ---- ai --------------------------------------------------------------
     # Slow by nature and costs real money per call, so a tight limit and a long
     # timeout. Streaming for chat.
@@ -192,6 +201,9 @@ ROUTES: tuple[Route, ...] = (
     Route("/v1/admin/invoices", "payment", require_auth=True),
     Route("/v1/admin/webhooks", "payment", require_auth=True),
     Route("/v1/admin/revenue", "payment", require_auth=True, timeout=60),
+    # A reindex can run for minutes, so it gets a much longer budget than the
+    # default admin route.
+    Route("/v1/admin/search", "search", require_auth=True, timeout=300),
 )
 
 

@@ -1,0 +1,26 @@
+{
+  "name": "@knowledgeos/types",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Domain types mirroring knowledgeos_core schemas, errors and pagination.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "generate": "tsx scripts/generate.ts",
+    "clean": "rm -rf node_modules .turbo *.tsbuildinfo"
+  },
+  "devDependencies": {
+    "@knowledgeos/config": "workspace:*",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.39.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

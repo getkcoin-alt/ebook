@@ -33,6 +33,37 @@ class TestRouting:
         await client.get("/v1/books/some-slug-here")
         assert upstream_log[-1]["path"] == "/v1/books/some-slug-here"
 
+    async def test_the_shared_admin_prefix_splits_by_owning_service(self):
+        """`/v1/admin` is shared: the admin service owns it in general, but each
+        service serves the admin surface for the data it owns. Without the explicit
+        entries these would all be proxied to `admin`, which has never heard of a
+        coupon."""
+        from routes import resolve
+
+        assert resolve("/v1/admin/settings").upstream == "admin"
+        assert resolve("/v1/admin/books/abc").upstream == "books"
+        assert resolve("/v1/admin/orders/abc/refund").upstream == "payment"
+        assert resolve("/v1/admin/coupons").upstream == "payment"
+        assert resolve("/v1/admin/revenue").upstream == "payment"
+
+    async def test_payment_read_paths_are_reachable_without_a_token(self):
+        """The checkout page prices a cart before the customer signs in."""
+        from routes import resolve
+
+        for path in ("/v1/checkout/quote", "/v1/coupons/validate", "/v1/payments/providers"):
+            route = resolve(path)
+            assert route.upstream == "payment", path
+            assert route.public is True, path
+
+    async def test_webhook_paths_are_never_cached(self):
+        """The payment service verifies the signature over the raw body, so nothing
+        between the provider and it may alter or replay those bytes."""
+        from routes import resolve
+
+        route = resolve("/v1/webhooks/razorpay")
+        assert route.upstream == "payment"
+        assert route.cache_ttl == 0
+
 
 class TestHeaderHygiene:
     async def test_hop_by_hop_headers_are_stripped(self, client, upstream_log):
@@ -190,7 +221,8 @@ class TestAuthentication:
 
     async def test_webhooks_are_public(self, client):
         # Providers send no user token; the payload signature authenticates them.
-        assert (await client.post("/v1/payments/webhooks/stripe", json={})).status_code == 200
+        assert (await client.post("/v1/webhooks/stripe", json={})).status_code == 200
+        assert (await client.post("/v1/webhooks/razorpay", json={})).status_code == 200
 
     async def test_banned_user_is_blocked(self, client, as_user, app):
         principal = as_user(user_id="banned-user")

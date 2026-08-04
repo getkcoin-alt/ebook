@@ -655,6 +655,22 @@ class InternalPublishRequest(BaseSchema):
     published_at: datetime | None = None
 
 
+class OwnedBooksRequest(BaseSchema):
+    user_id: uuid.UUID
+    book_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+
+
+class OwnedBooksResponse(BaseSchema):
+    """Which of the requested books the user already holds a live grant for.
+
+    The payment service prices a cart with this, so a customer is not charged twice
+    for the same file.
+    """
+
+    user_id: uuid.UUID
+    owned_book_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Catalogue envelope
 # ---------------------------------------------------------------------------

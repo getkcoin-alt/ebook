@@ -149,22 +149,49 @@ ROUTES: tuple[Route, ...] = (
     # ---- commerce --------------------------------------------------------
     Route("/v1/orders", "payment", require_auth=True, rate_limit="checkout"),
     Route("/v1/payments", "payment", require_auth=True, rate_limit="checkout"),
-    # Webhooks arrive from Razorpay/Stripe with no user token, and their signature
-    # is what authenticates them. Generous limit: providers retry in bursts.
+    # Which gateways this deployment can use. Public because the checkout page
+    # reads it before the customer has signed in, and it returns only public keys.
+    Route("/v1/payments/providers", "payment", public=True, cache_ttl=300),
+    # Quoting a cart and checking a coupon are read-only and are called from the
+    # checkout page before sign-in. Never cached: the answer depends on the cart in
+    # the request body, and on who is asking.
+    Route("/v1/checkout", "payment", public=True, rate_limit="anonymous", cache_ttl=0),
+    Route("/v1/coupons", "payment", public=True, rate_limit="anonymous", cache_ttl=0),
+    # Webhooks arrive from Razorpay/Stripe with no user token; their signature is
+    # what authenticates them. Generous limit: providers retry in bursts.
+    #
+    # Never cached and never rewritten — the payment service verifies the signature
+    # over the *raw* body, so anything that alters those bytes in transit breaks
+    # verification and every callback starts failing closed.
     Route(
-        "/v1/payments/webhooks",
+        "/v1/webhooks",
         "payment",
         public=True,
         rate_limit="webhook",
         anonymous_rate_limit="webhook",
+        cache_ttl=0,
         timeout=30,
     ),
-    Route("/v1/coupons", "payment", require_auth=True),
     Route("/v1/subscriptions", "payment", require_auth=True),
+    # Plans are a public price list, and they change rarely.
+    Route("/v1/plans", "payment", public=True, cache_ttl=300),
+    Route("/v1/invoices", "payment", require_auth=True),
+    Route("/v1/affiliate", "payment", require_auth=True),
     # ---- everything else -------------------------------------------------
     Route("/v1/notifications", "notification", require_auth=True),
     Route("/v1/automation", "automation", require_auth=True, timeout=60),
+    # `/v1/admin` is a shared prefix: the admin service owns it in general, but
+    # each service serves the admin surface for the data it owns. Longest-prefix
+    # matching sends those to the right place; without these lines they would all
+    # be proxied to `admin`, which has never heard of a coupon.
     Route("/v1/admin", "admin", require_auth=True, timeout=60),
+    Route("/v1/admin/books", "books", require_auth=True, timeout=60),
+    Route("/v1/admin/orders", "payment", require_auth=True, timeout=60),
+    Route("/v1/admin/coupons", "payment", require_auth=True),
+    Route("/v1/admin/plans", "payment", require_auth=True),
+    Route("/v1/admin/invoices", "payment", require_auth=True),
+    Route("/v1/admin/webhooks", "payment", require_auth=True),
+    Route("/v1/admin/revenue", "payment", require_auth=True, timeout=60),
 )
 
 

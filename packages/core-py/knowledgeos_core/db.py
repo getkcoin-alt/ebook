@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import DateTime, MetaData, Uuid, func, text
 from sqlalchemy.ext.asyncio import (
@@ -53,7 +53,9 @@ class Base(DeclarativeBase):
     # wants a lazy SELECT, and under asyncio that emits IO from a synchronous
     # context, typically during response serialisation. PostgreSQL supports
     # RETURNING, so this costs nothing.
-    __mapper_args__ = {"eager_defaults": True}
+    # ClassVar so ruff does not read this as a dataclass-style mutable default; it is
+    # SQLAlchemy configuration, and subclasses that override it replace it wholesale.
+    __mapper_args__: ClassVar[dict[str, Any]] = {"eager_defaults": True}
 
 
 #: Dialect-agnostic UUID column type.

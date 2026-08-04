@@ -1,0 +1,14 @@
+# Payment service dependencies.
+# knowledgeos-core provides FastAPI, SQLAlchemy, Redis, httpx, structlog and uvicorn.
+#
+# Deliberately no razorpay/stripe SDK: the surface this service uses is four REST
+# endpoints per provider, and a vendor SDK would bring its own HTTP stack, its own
+# retry policy and its own logging — none of which match the platform's. The
+# signature schemes are implemented directly against hmac, which is also what makes
+# them testable without a network.
+
+# Alembic migrations run through a blocking driver.
+psycopg[binary]>=3.2.3
+
+# EmailStr on billing payloads.
+email-validator>=2.2.0

@@ -23,6 +23,14 @@ class BaseSchema(BaseModel):
         from_attributes=True,  # build straight from ORM rows
         populate_by_name=True,
         str_strip_whitespace=True,
+        # Enum fields come out as their plain values, so responses serialise to
+        # strings without a custom encoder.
+        #
+        # The sharp edge: this only applies to values that were *validated*. A field
+        # left at its enum default keeps the enum member. So `payload.provider.value`
+        # works while the client omits the field and raises AttributeError the moment
+        # they send it. Never call `.value` on a field of one of these models — every
+        # enum on this platform is a StrEnum, so `str(field)` is correct either way.
         use_enum_values=True,
         # Reject unknown fields on input so a typo'd query param is a 422 rather
         # than being silently ignored.

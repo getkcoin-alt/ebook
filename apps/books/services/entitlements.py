@@ -123,6 +123,25 @@ class EntitlementService:
             )
         return access
 
+    async def owned_subset(
+        self, session: AsyncSession, *, user_id: uuid.UUID, book_ids: list[uuid.UUID]
+    ) -> set[uuid.UUID]:
+        """Which of ``book_ids`` this user already has a live grant for.
+
+        One query for the whole cart. The payment service calls this while pricing a
+        checkout so it can say "you already own this" instead of taking money for a
+        second copy of the same file.
+        """
+        if not book_ids:
+            return set()
+        now = datetime.now(UTC)
+        stmt = select(Entitlement.book_id).where(
+            Entitlement.user_id == user_id,
+            Entitlement.book_id.in_(book_ids),
+            self._active_clause(now),
+        )
+        return set((await session.execute(stmt)).scalars().all())
+
     async def require_download(
         self, session: AsyncSession, *, user_id: uuid.UUID, book: Book
     ) -> AccessOut:

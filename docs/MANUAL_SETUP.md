@@ -168,7 +168,7 @@ environment.
    RAZORPAY_KEY_SECRET=…
    ```
 3. **Settings → Webhooks → Add New Webhook**
-   - URL: `https://api.yourdomain.com/v1/payments/webhooks/razorpay`
+   - URL: `https://api.yourdomain.com/v1/webhooks/razorpay`
    - Events: `payment.captured`, `payment.failed`, `order.paid`, `refund.processed`,
      `subscription.charged`, `subscription.cancelled`
    - Copy the webhook secret:
@@ -176,8 +176,15 @@ environment.
      RAZORPAY_WEBHOOK_SECRET=…
      ```
 
-**The webhook secret is not optional.** Without it the service cannot verify that a
-callback came from Razorpay, and anyone who learns the URL can mark orders paid.
+**The webhook secret is not optional, and it is a different value from
+`RAZORPAY_KEY_SECRET`.** They sign different things: the webhook secret signs the raw
+request body, the API secret signs the `<order_id>|<payment_id>` callback from the
+Checkout modal. Using one where the other belongs fails closed — the service refuses
+the callback rather than trusting it — which is the right direction to fail but is
+confusing if you do not know to look for it.
+
+Without a webhook secret the service cannot prove a callback came from Razorpay, so
+it refuses **every** webhook. Orders will be created and never settle.
 
 Local testing needs a public URL — use `ngrok http 8000` and register the ngrok URL
 as a temporary webhook endpoint.
@@ -190,7 +197,7 @@ as a temporary webhook endpoint.
    STRIPE_PUBLISHABLE_KEY=pk_test_…
    ```
 2. **Developers → Webhooks → Add endpoint**
-   - URL: `https://api.yourdomain.com/v1/payments/webhooks/stripe`
+   - URL: `https://api.yourdomain.com/v1/webhooks/stripe`
    - Events: `checkout.session.completed`, `payment_intent.succeeded`,
      `payment_intent.payment_failed`, `charge.refunded`,
      `customer.subscription.updated`, `customer.subscription.deleted`
@@ -198,13 +205,36 @@ as a temporary webhook endpoint.
      STRIPE_WEBHOOK_SECRET=whsec_…
      ```
 
-Local testing: `stripe listen --forward-to localhost:8000/v1/payments/webhooks/stripe`
+Local testing: `stripe listen --forward-to localhost:8000/v1/webhooks/stripe`
 prints a `whsec_…` for the CLI session — use that one locally.
 
 ### GST (India)
 
-`GST_PERCENT=18` is the current rate on digital goods. Verify it against current law
-before invoicing real customers; this is a legal figure, not a technical default.
+Four settings on the payment service, and every one of them has legal weight rather
+than being a technical default. Set them deliberately.
+
+```
+GST_PERCENT=18            # current rate on digital goods — verify against current law
+SELLER_STATE_CODE=GJ      # your GST registration state
+PRICES_INCLUDE_TAX=true   # catalogue prices already contain GST
+SELLER_GSTIN=…            # required on every invoice if you are registered
+SELLER_LEGAL_NAME=…       # the registered entity name, not the brand
+INVOICE_PREFIX=KOS        # appears in every invoice number
+```
+
+**`SELLER_STATE_CODE` decides which government gets paid.** A sale to a buyer in the
+same state splits into CGST + SGST; a sale to another state is a single IGST line.
+The customer is charged the same either way, so getting this wrong is invisible in
+the checkout flow and surfaces at filing time.
+
+**`PRICES_INCLUDE_TAX=true`** (the Indian retail norm) means a book listed at ₹499
+charges ₹499, with the GST extracted from it. Setting it to `false` adds 18% at
+checkout instead — legal in some contexts, but be certain that is what you intend,
+because it changes what every existing price means.
+
+Invoice numbers are issued as a consecutive serial within the financial year
+(April–March): `KOS/2026-27/000001`. That format is a legal requirement, and gaps in
+the sequence are a question an auditor will ask — do not delete invoice rows.
 
 ---
 

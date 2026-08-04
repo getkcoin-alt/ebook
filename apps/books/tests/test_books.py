@@ -381,6 +381,46 @@ class TestInternalRoutes:
         assert response.status_code == 200
         assert [b["id"] for b in response.json()["items"]] == [str(book.id)]
 
+    async def test_internal_entitlement_check_reports_what_a_user_owns(
+        self, client, book_factory, as_internal, session
+    ):
+        """The payment service prices a cart with this, so a customer is not charged
+        twice for a file they already hold."""
+        from services.entitlements import EntitlementService
+        from settings import settings as service_settings
+
+        owned = await book_factory()
+        other = await book_factory()
+        await EntitlementService(service_settings).grant(
+            session, user_id=READER_ID, book_id=owned.id, source="purchase"
+        )
+        await session.commit()
+
+        as_internal()
+        response = await client.post(
+            "/internal/entitlements/check",
+            json={"user_id": str(READER_ID), "book_ids": [str(owned.id), str(other.id)]},
+        )
+        assert response.status_code == 200
+        assert response.json()["owned_book_ids"] == [str(owned.id)]
+
+
+class TestUploads:
+    async def test_an_admin_can_mint_an_upload_target(self, client, as_admin):
+        """Regression: `category` is a required enum field, so use_enum_values has
+        already turned it into a plain string — reading `.value` off it 500s."""
+        as_admin()
+        response = await client.post(
+            "/v1/admin/books/uploads",
+            json={
+                "category": "book",
+                "filename": "manual.pdf",
+                "content_type": "application/pdf",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["url"]
+
 
 class TestPlatformContract:
     async def test_health_and_metrics(self, client):

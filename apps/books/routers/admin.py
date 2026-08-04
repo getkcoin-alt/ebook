@@ -36,6 +36,8 @@ from schemas import (
     EntitlementGrantIn,
     EntitlementOut,
     InternalPublishRequest,
+    OwnedBooksRequest,
+    OwnedBooksResponse,
     UploadRequest,
     UploadTargetOut,
 )
@@ -248,7 +250,9 @@ async def create_upload_target(
     storage: Storage,
     user: CurrentUser,
 ) -> UploadTargetOut:
-    category = payload.category.value
+    # str(), not .value: BaseSchema sets use_enum_values=True, so this field is
+    # already a plain string by the time the handler runs.
+    category = str(payload.category)
     max_bytes = (
         settings.max_book_upload_bytes if category == "book" else settings.max_cover_upload_bytes
     )
@@ -345,6 +349,27 @@ async def internal_batch_books(
         items=[BookDetail.model_validate(row) for row in rows],
         missing=[book_id for book_id in payload.book_ids if book_id not in found],
     )
+
+
+@internal_router.post(
+    "/entitlements/check",
+    response_model=OwnedBooksResponse,
+    summary="Which of these books does a user already own? (internal)",
+    description=(
+        "Called by the payment service while pricing a cart, so a customer is not "
+        "charged a second time for a file they already hold."
+    ),
+)
+async def internal_entitlements_check(
+    payload: OwnedBooksRequest,
+    caller: InternalCaller,
+    session: DbSession,
+    entitlements: Entitlements,
+) -> OwnedBooksResponse:
+    owned = await entitlements.owned_subset(
+        session, user_id=payload.user_id, book_ids=payload.book_ids
+    )
+    return OwnedBooksResponse(user_id=payload.user_id, owned_book_ids=sorted(owned, key=str))
 
 
 @internal_router.post(

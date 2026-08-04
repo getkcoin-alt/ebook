@@ -125,6 +125,16 @@ app = create_app(
 
 Everything operational is inherited. Service code is domain logic.
 
+## Build status
+
+Foundation, auth service and gateway are complete and tested (154 tests). The book,
+search and AI services are in progress; payments, notifications, automation, workers,
+admin and the frontend application are not yet started.
+
+**[`docs/BUILD_STATUS.md`](docs/BUILD_STATUS.md)** has the precise picture, including
+an explicit list of what has and has not actually been executed — Docker images, for
+instance, have never been built, because the build environment has no Docker daemon.
+
 ## Getting started
 
 Requirements: Docker, Node 22+, pnpm 10+, Python 3.11+.

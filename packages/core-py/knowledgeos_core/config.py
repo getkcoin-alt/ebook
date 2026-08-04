@@ -21,15 +21,39 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
 def _split_csv(value: Any) -> Any:
-    """Allow list-typed settings to be provided as comma-separated env strings."""
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return []
-        if stripped.startswith("["):  # already JSON
-            return value
-        return [item.strip() for item in stripped.split(",") if item.strip()]
-    return value
+    """Parse a list-typed setting from an environment string.
+
+    Accepts both forms, because both appear in the wild — a Railway dashboard field
+    holds ``a.com,b.com`` while a committed ``.env`` may hold a JSON array:
+
+        CORS_ORIGINS=https://a.com,https://b.com
+        CORS_ORIGINS=["https://a.com","https://b.com"]
+
+    This validator owns the parsing outright. ``enable_decoding=False`` on the
+    settings config turns off pydantic-settings' own ``json.loads`` pre-pass, which
+    would otherwise reject the comma-separated form before this ever runs.
+    """
+    if not isinstance(value, str):
+        return value
+
+    stripped = value.strip()
+    if not stripped:
+        return []
+
+    if stripped.startswith("["):
+        import json
+
+        try:
+            decoded = json.loads(stripped)
+        except json.JSONDecodeError:
+            # Looks like JSON but is not. Fall through to CSV rather than fail —
+            # a stray bracket should not stop a service from booting.
+            pass
+        else:
+            if isinstance(decoded, list):
+                return [str(item).strip() for item in decoded]
+
+    return [item.strip() for item in stripped.split(",") if item.strip()]
 
 
 CsvList = Annotated[list[str], BeforeValidator(_split_csv)]
@@ -47,6 +71,16 @@ class ServiceSettings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        # pydantic-settings treats any list/dict-typed field as "complex" and runs
+        # json.loads() on the raw environment value BEFORE field validators. That
+        # makes `CORS_ORIGINS=http://localhost:3000` a hard SettingsError, because
+        # a bare hostname is not JSON — the CsvList BeforeValidator never gets a
+        # chance to run. Disabling the pre-decode hands the raw string to the
+        # validator, which is what CsvList is for.
+        #
+        # Found in production: every test constructs Settings in code, so nothing
+        # exercised the environment-variable path until the first real deploy.
+        enable_decoding=False,
     )
 
     # ---- identity -------------------------------------------------------

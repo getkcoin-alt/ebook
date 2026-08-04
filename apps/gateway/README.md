@@ -29,8 +29,13 @@ limit policy, its cache TTL and whether the cache varies per user, plus timeout 
 streaming overrides.
 
 ```python
-Route("/v1/books", "books", public=True, cache_ttl=120,
-      invalidate_on=("book.published", "book.updated"))
+Route(
+    "/v1/books",
+    "books",
+    public=True,
+    cache_ttl=120,
+    invalidate_on=("book.published", "book.updated"),
+)
 Route("/v1/library", "books", require_auth=True, cache_ttl=30, cache_vary_on_user=True)
 Route("/v1/ai", "ai", require_auth=True, rate_limit="ai", timeout=120, stream=True)
 ```

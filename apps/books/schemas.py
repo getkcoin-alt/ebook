@@ -655,4 +655,39 @@ class InternalPublishRequest(BaseSchema):
     published_at: datetime | None = None
 
 
+# ---------------------------------------------------------------------------
+# Catalogue envelope
+# ---------------------------------------------------------------------------
+
+
+class FacetValue(BaseSchema):
+    """One row of a filter sidebar: what to send back, what to show, how many."""
+
+    value: str
+    label: str
+    count: int
+
+
+class CatalogueFacets(BaseSchema):
+    """Counts computed under the *same* filters as the page they accompany."""
+
+    categories: list[FacetValue] = Field(default_factory=list)
+    languages: list[FacetValue] = Field(default_factory=list)
+    price_ranges: list[FacetValue] = Field(default_factory=list)
+
+
+class CataloguePage(BaseSchema):
+    """Cursor-paginated catalogue feed.
+
+    There is no ``total``: counting a filtered catalogue costs a full scan on every
+    page, and infinite scroll never displays the number. Ask for ``include_facets``
+    when the UI needs counts, and pay for them once.
+    """
+
+    items: list[BookListItem] = Field(default_factory=list)
+    next_cursor: str | None = None
+    has_more: bool = False
+    facets: CatalogueFacets | None = None
+
+
 CategoryNode.model_rebuild()

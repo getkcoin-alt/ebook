@@ -1,11 +1,14 @@
-# syntax=docker/dockerfile:1.7
-#
 # Authentication service.
 #
 # Build context is the REPOSITORY ROOT — the image needs both this service and the
 # shared packages/core-py library:
 #
 #   docker build -f apps/auth/Dockerfile -t knowledgeos/auth .
+#
+# Deliberately plain Dockerfile syntax: no heredocs, no `--mount=type=cache`, no
+# `# syntax=` directive. Those require BuildKit frontend features that not every
+# builder enables — Railway's rejects them, and a Dockerfile that fails to *parse*
+# dies in two seconds with an empty build log, which is a miserable thing to debug.
 
 ARG PYTHON_VERSION=3.12
 
@@ -29,25 +32,23 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /build
 
-# Dependency manifests first: editing a .py file must not invalidate the slow
-# dependency layer.
+# Dependency manifests first, so editing a .py file does not invalidate the slow
+# dependency layer. A stub package directory lets pip resolve and install
+# core-py's dependencies before its source exists — hatchling needs the package
+# directory to be present, but not to be complete.
 COPY packages/core-py/pyproject.toml packages/core-py/
 COPY apps/auth/requirements.txt apps/auth/
+RUN mkdir -p packages/core-py/knowledgeos_core \
+    && touch packages/core-py/knowledgeos_core/__init__.py
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    python - <<'PY' > /tmp/core-deps.txt
-import pathlib, tomllib
-data = tomllib.loads(pathlib.Path("packages/core-py/pyproject.toml").read_text())
-print("\n".join(data["project"]["dependencies"]))
-PY
-
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip setuptools wheel \
-    && pip install -r /tmp/core-deps.txt \
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install ./packages/core-py \
     && pip install -r apps/auth/requirements.txt
 
+# Now the real source. --no-deps because everything is resolved above;
+# --force-reinstall replaces the stub with the actual package.
 COPY packages/core-py/ packages/core-py/
-RUN pip install --no-deps ./packages/core-py
+RUN pip install --no-deps --force-reinstall ./packages/core-py
 
 # ---------------------------------------------------------------------------
 # Stage 2: runtime. Slim, non-root, no build tooling.
@@ -55,20 +56,17 @@ RUN pip install --no-deps ./packages/core-py
 FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime
 
 ARG GIT_SHA=unknown
-ARG BUILD_DATE=unknown
 
 LABEL org.opencontainers.image.title="knowledgeos-auth" \
       org.opencontainers.image.description="Identity, tokens, OAuth, 2FA and RBAC" \
       org.opencontainers.image.source="https://github.com/getkcoin-alt/ebook" \
-      org.opencontainers.image.revision="${GIT_SHA}" \
-      org.opencontainers.image.created="${BUILD_DATE}"
+      org.opencontainers.image.revision="${GIT_SHA}"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONFAULTHANDLER=1 \
     PATH="/opt/venv/bin:$PATH" \
     SERVICE_NAME=auth \
-    SERVICE_VERSION=${GIT_SHA} \
     PORT=8000
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -87,7 +85,7 @@ COPY --chown=app:app apps/auth/ /app/apps/auth/
 
 RUN mkdir -p /tmp/prometheus && chown -R app:app /tmp/prometheus
 
-# Never run as root: a container escape should not begin at uid 0. This matters
+# Never run as root: a container escape should not begin at uid 0. That matters
 # more here than anywhere else — this process holds the token-signing key.
 USER app
 

@@ -22,13 +22,22 @@ A complete REST API already exists and is deployed. Your job is the frontend onl
 Every piece of data comes from that API over HTTP. If you add Supabase auth or a
 database table, the work has to be thrown away.
 
-All API access goes through **one base URL** from an environment variable:
+All API access goes through **one base URL** from an environment variable, which is
+already live:
 
 ```
-VITE_API_BASE_URL   e.g. https://api.knowledgeos.dev
+VITE_API_BASE_URL = https://gateway-production-c3e0.up.railway.app
 ```
 
-While building, that URL will not respond. So:
+That is the API gateway. Every path in this prompt is relative to it — the gateway
+routes `/v1/auth`, `/v1/books`, `/v1/search`, `/v1/orders`, `/v1/checkout`,
+`/v1/notifications` and the rest to the right service behind it. **Never call a
+service directly; there is only this one host.**
+
+Check it with `GET /health` and read the live, aggregated API documentation at
+`/docs` — that is the authoritative contract if anything below is ambiguous.
+
+Build against mocks first anyway, so a backend hiccup never blocks UI work:
 
 - Put every network call behind a typed client in `src/lib/api/`.
 - Add `src/lib/api/mock/` with realistic fixture data.
@@ -437,11 +446,18 @@ tooltip explaining they are essential account messages. Do not hide them.
 ## Environment variables
 
 ```
-VITE_API_BASE_URL=https://api.knowledgeos.dev
-VITE_CDN_BASE_URL=https://cdn.knowledgeos.dev
+VITE_API_BASE_URL=https://gateway-production-c3e0.up.railway.app
+VITE_CDN_BASE_URL=
 VITE_USE_MOCK_API=true
 VITE_FEATURE_AI=false
 ```
+
+`VITE_CDN_BASE_URL` is intentionally empty for now — object storage does not have a
+public domain yet. **`coverUrl(key, size)` must handle that**: when the base URL is
+empty or the key is null, return a generated placeholder (a gradient derived from the
+book id, with the title's initials) rather than a broken image. Covers are the single
+most visible element of this app, so the fallback needs to look deliberate, not like
+a failure. When the CDN domain lands, setting one variable fixes every image.
 
 Commit a `.env.example` with these and read them through one `src/lib/config.ts` —
 never `import.meta.env` scattered through components.
@@ -468,8 +484,7 @@ before you accept the result:
 ### Then, to integrate
 
 ```bash
-# 1. Point at the real gateway
-VITE_API_BASE_URL=https://<gateway>.up.railway.app
+# 1. Flip off the mocks — the URL is already correct
 VITE_USE_MOCK_API=false
 
 # 2. Allow the frontend origin on every service

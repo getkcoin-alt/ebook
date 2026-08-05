@@ -1,0 +1,10 @@
+# AI service dependencies.
+# knowledgeos-core provides FastAPI, SQLAlchemy, Redis, httpx, structlog and uvicorn.
+#
+# No anthropic/openai SDK: this service uses two REST endpoints per provider and
+# needs precise control over timeouts and failover between them. A vendor SDK would
+# bring its own HTTP stack and its own retry policy, and retries are exactly what
+# must not happen silently when each one costs money.
+
+# Alembic migrations run through a blocking driver.
+psycopg[binary]>=3.2.3

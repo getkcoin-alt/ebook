@@ -39,6 +39,14 @@ PRICING: dict[str, tuple[float, float]] = {
     "gpt-4o": (2.50, 10.00),
     "text-embedding-3-small": (0.02, 0.0),
     "text-embedding-3-large": (0.13, 0.0),
+    # Groq, reached through the OpenAI-compatible client by pointing
+    # `openai_base_url` at api.groq.com. Without these the ceiling would price a
+    # Groq call at DEFAULT_PRICING — roughly ten times its real cost — and the
+    # budget would stop the feature long before any money had actually been spent.
+    "llama-3.3-70b": (0.59, 0.79),
+    "llama-3.1-8b": (0.05, 0.08),
+    "openai/gpt-oss-120b": (0.15, 0.75),
+    "openai/gpt-oss-20b": (0.10, 0.50),
 }
 
 #: What an unrecognised model is assumed to cost. Deliberately on the high side: an

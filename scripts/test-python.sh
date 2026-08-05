@@ -82,7 +82,7 @@ for target in "${TARGETS[@]}"; do
         PYTHONPATH="$ROOT/$target" \
         COVERAGE_FILE="$ROOT/.coverage.$name" \
         KOS_SERVICE_TEST_RUN=1 \
-        "$ROOT/${PYTHON}" -m pytest tests/ "${args[@]}"
+        "$PYTHON" -m pytest tests/ "${args[@]}"
     ); then
         passed=$((passed + 1))
     else

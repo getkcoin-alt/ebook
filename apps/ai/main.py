@@ -19,13 +19,14 @@ from __future__ import annotations
 
 from knowledgeos_core import Components, create_app, get_logger, run
 from knowledgeos_core.app import AppContext
-from routers import assistant_router, internal_router
+from routers import admin_router, assistant_router, internal_router
 from services import (
     BudgetService,
     ChatService,
     Generator,
     ModerationService,
     ProviderRegistry,
+    ReportingService,
 )
 from settings import settings
 
@@ -41,6 +42,7 @@ async def _bootstrap(ctx: AppContext) -> None:
         {
             "providers": providers,
             "budget": budget,
+            "reporting": ReportingService(settings),
             "generator": generator,
             "moderation": ModerationService(settings, generator),
             "chat": ChatService(settings, generator, providers, budget, ctx.services),
@@ -83,7 +85,7 @@ app = create_app(
         # conversations check entitlement with the books service first.
         service_clients=True,
     ),
-    routers=[assistant_router, internal_router],
+    routers=[assistant_router, admin_router, internal_router],
     on_startup=[_bootstrap],
     on_shutdown=[_shutdown],
     description=(

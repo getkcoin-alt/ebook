@@ -549,3 +549,133 @@ async def test_chat_is_never_served_from_cache(session, services, provider):
         session, user_id=READER_ID, message="same question", conversation_id=conversation.id
     )
     assert len(provider.calls) == 2
+
+
+class TestAdminReporting:
+    """The console reads the same figures as the ops endpoint, through one service.
+    Two implementations would drift, and the failure mode is the console and the ops
+    endpoint disagreeing about the bill with no way to tell which is right."""
+
+    async def test_usage_needs_a_permission(self, client, as_user):
+        as_user(permissions=["ai:use"])
+        assert (await client.get("/v1/admin/ai/usage")).status_code == 403
+
+    async def test_usage_counts_each_outcome_separately(self, client, as_user, session, settings):
+        """Collapsing them makes the cache look free, moderation look like it never
+        ran, and hides the failure rate."""
+        from models import Generation
+        from schemas import GenerationStatus, TaskKind
+
+        for status, cost in (
+            (GenerationStatus.SUCCEEDED, 0.02),
+            (GenerationStatus.CACHED, 0.0),
+            (GenerationStatus.FAILED, 0.0),
+            (GenerationStatus.BLOCKED, 0.0),
+        ):
+            session.add(
+                Generation(
+                    kind=TaskKind.DESCRIPTION,
+                    status=status,
+                    provider="anthropic",
+                    cost_usd=cost,
+                    input_tokens=100,
+                    output_tokens=50,
+                )
+            )
+        await session.commit()
+
+        as_user(permissions=["analytics:read"])
+        body = (await client.get("/v1/admin/ai/usage", params={"days": 7})).json()
+
+        assert body["total_requests"] == 4
+        assert body["cached_requests"] == 1
+        assert body["failed_requests"] == 1
+        assert body["blocked_requests"] == 1
+        # Only the ones that reached a provider — the denominator for cost per
+        # generation. Dividing by the total makes a cache hit look like it made the
+        # model cheaper.
+        assert body["billable_requests"] == 2
+
+    async def test_usage_reports_the_ceiling_alongside_the_spend(self, client, as_user, settings):
+        """So a dashboard can render a gauge rather than a bare number."""
+        as_user(permissions=["analytics:read"])
+        body = (await client.get("/v1/admin/ai/usage")).json()
+
+        assert body["daily_limit_usd"] == settings.daily_cost_limit_usd
+        assert "today_cost_usd" in body
+
+    async def test_an_empty_window_returns_zeros_not_nulls(self, client, as_user):
+        """SUM over an empty window is NULL, which would propagate into every derived
+        figure and render as a blank card."""
+        as_user(permissions=["analytics:read"])
+        body = (await client.get("/v1/admin/ai/usage", params={"days": 1})).json()
+
+        assert body["cost_usd"] == 0
+        assert body["input_tokens"] == 0
+        assert body["total_requests"] == 0
+
+    async def test_spend_history_comes_from_the_budget_counters(self, client, as_user, session):
+        """Read from what the ceiling is enforced against — a chart built from
+        anything else could disagree with the limit that actually stopped serving."""
+        from models import CostBudget
+        from services.budget import today
+
+        session.add(CostBudget(day=today(), user_id=None, cost_usd=1.25, request_count=4))
+        await session.commit()
+
+        as_user(permissions=["analytics:read"])
+        body = (await client.get("/v1/admin/ai/spend", params={"days": 30})).json()
+
+        assert body["total_usd"] == 1.25
+        assert body["days"][0]["request_count"] == 4
+
+    async def test_failures_never_include_the_prompt_or_the_answer(self, client, as_user, session):
+        """An admin console is not a place to read customers' questions."""
+        from models import Generation
+        from schemas import GenerationStatus, TaskKind
+
+        session.add(
+            Generation(
+                kind=TaskKind.CHAT,
+                status=GenerationStatus.FAILED,
+                provider="anthropic",
+                prompt="a customer's private question",
+                content="an answer",
+                error="rate limited",
+            )
+        )
+        await session.commit()
+
+        as_user(permissions=["analytics:read"])
+        response = await client.get("/v1/admin/ai/failures")
+
+        assert response.json()[0]["error"] == "rate limited"
+        assert "private question" not in response.text
+        assert "an answer" not in response.text
+
+    async def test_the_internal_route_and_the_console_agree(
+        self, client, as_user, as_internal, session
+    ):
+        from models import Generation
+        from schemas import GenerationStatus, TaskKind
+
+        session.add(
+            Generation(
+                kind=TaskKind.SEO,
+                status=GenerationStatus.SUCCEEDED,
+                provider="openai",
+                cost_usd=0.5,
+                input_tokens=10,
+                output_tokens=20,
+            )
+        )
+        await session.commit()
+
+        as_internal("admin")
+        ops = (await client.get("/internal/usage", params={"days": 7})).json()
+        as_user(permissions=["analytics:read"])
+        console = (await client.get("/v1/admin/ai/usage", params={"days": 7})).json()
+
+        assert ops["cost_usd"] == console["cost_usd"]
+        assert ops["total_requests"] == console["total_requests"]
+        assert ops["by_provider"] == console["by_provider"]

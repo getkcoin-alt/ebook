@@ -537,3 +537,101 @@ class TestPlatformContract:
     async def test_errors_use_the_platform_envelope(self, client):
         error = (await client.get("/v1/books/nope")).json()["error"]
         assert set(error) >= {"code", "message"}
+
+
+class TestModerationQueue:
+    """The per-book review listing cannot serve a moderator: they do not know which
+    book has something pending, which is the entire question."""
+
+    async def test_the_queue_spans_the_whole_catalogue(
+        self, client, session, book_factory, as_admin, as_user, settings, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "reviews_require_moderation", True)
+        first, second = await book_factory(slug="one"), await book_factory(slug="two")
+
+        as_user(READER_ID)
+        await client.post(f"/v1/books/{first.id}/reviews", json={"rating": 5, "body": "Good."})
+        as_user(OTHER_ID)
+        await client.post(f"/v1/books/{second.id}/reviews", json={"rating": 2, "body": "Bad."})
+
+        as_admin()
+        response = await client.get("/v1/admin/moderation/reviews")
+        body = response.json()
+
+        assert response.status_code == 200
+        assert body["total"] == 2
+        # Two different books in one queue — the thing the per-book route cannot do.
+        assert len({row["book_id"] for row in body["items"]}) == 2
+
+    async def test_the_queue_is_oldest_first(
+        self, client, session, book_factory, as_admin, as_user, settings, monkeypatch
+    ):
+        """A queue worked newest-first leaves its oldest items forever, and those are
+        exactly the ones a customer is waiting on."""
+        monkeypatch.setattr(settings, "reviews_require_moderation", True)
+        book = await book_factory(slug="queued")
+
+        as_user(READER_ID)
+        await client.post(f"/v1/books/{book.id}/reviews", json={"rating": 5, "body": "First."})
+        as_user(OTHER_ID)
+        await client.post(f"/v1/books/{book.id}/reviews", json={"rating": 1, "body": "Second."})
+
+        as_admin()
+        items = (await client.get("/v1/admin/moderation/reviews")).json()["items"]
+        assert items[0]["body"] == "First."
+
+    async def test_it_reports_a_real_total(
+        self, client, book_factory, as_admin, as_user, settings, monkeypatch
+    ):
+        """ "37 waiting" is the number that decides whether someone starts, and an
+        infinite scroll cannot show it."""
+        monkeypatch.setattr(settings, "reviews_require_moderation", True)
+        book = await book_factory(slug="counted")
+
+        as_user(READER_ID)
+        await client.post(f"/v1/books/{book.id}/reviews", json={"rating": 4, "body": "Fine."})
+
+        as_admin()
+        body = (await client.get("/v1/admin/moderation/reviews", params={"limit": 1})).json()
+        assert body["total"] == 1
+        assert body["limit"] == 1
+
+    async def test_it_defaults_to_pending_only(
+        self, client, book_factory, as_admin, as_user, settings, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "reviews_require_moderation", False)
+        book = await book_factory(slug="approved-only")
+
+        as_user(READER_ID)
+        await client.post(f"/v1/books/{book.id}/reviews", json={"rating": 5, "body": "Auto."})
+
+        as_admin()
+        pending = (await client.get("/v1/admin/moderation/reviews")).json()
+        approved = (
+            await client.get("/v1/admin/moderation/reviews", params={"status": "approved"})
+        ).json()
+
+        assert pending["total"] == 0
+        assert approved["total"] == 1
+
+    async def test_counts_include_every_state(
+        self, client, book_factory, as_admin, as_user, settings, monkeypatch
+    ):
+        """The UI should never special-case a missing key and render a blank where a
+        zero belongs."""
+        monkeypatch.setattr(settings, "reviews_require_moderation", True)
+        book = await book_factory(slug="counts")
+
+        as_user(READER_ID)
+        await client.post(f"/v1/books/{book.id}/reviews", json={"rating": 3, "body": "Meh."})
+
+        as_admin()
+        counts = (await client.get("/v1/admin/moderation/reviews/counts")).json()
+
+        assert set(counts) == {"pending", "approved", "rejected", "flagged"}
+        assert counts["pending"] == 1
+        assert counts["approved"] == 0
+
+    async def test_the_queue_needs_the_moderate_permission(self, client, as_admin, as_user):
+        as_user(READER_ID, permissions=["books:read"])
+        assert (await client.get("/v1/admin/moderation/reviews")).status_code == 403

@@ -105,12 +105,13 @@ def keyring(settings):
 
 @pytest.fixture
 def services(settings, keyring):
-    from services import AccountService, MfaService, TokenService
+    from services import AccountService, DirectoryService, MfaService, TokenService
     from services.oauth import OAuthService
 
     accounts = AccountService(settings)
     return {
         "keyring": keyring,
+        "directory": DirectoryService(settings),
         "tokens": TokenService(settings, keyring),
         "accounts": accounts,
         "mfa": MfaService(settings),
@@ -124,6 +125,8 @@ async def app(engine, settings, services):
     from knowledgeos_core import Components, create_app
     from knowledgeos_core.app import AppContext
     from routers import (
+        admin_users_router,
+        audit_router,
         auth_router,
         internal_router,
         mfa_router,
@@ -139,7 +142,15 @@ async def app(engine, settings, services):
         # No database/redis component: the lifespan would build its own engine.
         # A test double is injected below instead.
         components=Components(),
-        routers=[auth_router, mfa_router, sessions_router, oauth_router, internal_router],
+        routers=[
+            auth_router,
+            admin_users_router,
+            audit_router,
+            mfa_router,
+            sessions_router,
+            oauth_router,
+            internal_router,
+        ],
         on_startup=[_bootstrap],
     )
 

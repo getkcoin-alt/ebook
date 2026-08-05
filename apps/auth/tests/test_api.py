@@ -306,3 +306,237 @@ class TestPlatformContract:
         headers = (await client.get("/health")).headers
         assert headers["X-Content-Type-Options"] == "nosniff"
         assert headers["X-Frame-Options"] == "DENY"
+
+
+async def _admin_client(client, session, email: str = "ops@knowledgeos.dev"):
+    """A signed-in operator with `users:read` and `users:write`.
+
+    The role is granted directly on the row and the login happens afterwards, because
+    permissions are resolved at mint time and carried in the token — granting a role
+    to an already-signed-in user does not change the token they are holding.
+    """
+    from sqlalchemy import select
+
+    from models import User
+
+    await client.post("/v1/auth/register", json={**REGISTRATION, "email": email})
+    user = (await session.execute(select(User).where(User.email == email))).scalars().one()
+    user.roles = ["admin"]
+    await session.commit()
+
+    response = await client.post(
+        "/v1/auth/login", json={"email": email, "password": REGISTRATION["password"]}
+    )
+    token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}, user
+
+
+class TestAdminDirectory:
+    """The admin console's read side. None of this existed until it was needed —
+    ban was reachable only over HMAC, so a console could show a customer's orders
+    but could not say who the customer was."""
+
+    async def test_listing_users_requires_a_permission(self, client):
+        response = await _register_and_login(client)
+        token = response.json()["access_token"]
+
+        listed = await client.get("/v1/admin/users", headers={"Authorization": f"Bearer {token}"})
+        assert listed.status_code == 403
+
+    async def test_an_operator_can_page_the_directory(self, client, session):
+        headers, _ = await _admin_client(client, session)
+        await client.post("/v1/auth/register", json={**REGISTRATION, "email": "a@b.dev"})
+
+        listed = await client.get("/v1/admin/users", params={"limit": 10}, headers=headers)
+        body = listed.json()
+
+        assert listed.status_code == 200
+        # Offset paging with a real total, unlike the public feeds — a console needs
+        # to know a search matched 3 people rather than 3,000.
+        assert body["total"] >= 2
+        assert body["limit"] == 10
+
+    async def test_search_matches_email_and_name_substrings(self, client, session):
+        headers, _ = await _admin_client(client, session)
+        await client.post(
+            "/v1/auth/register",
+            json={**REGISTRATION, "email": "findme@elsewhere.dev", "full_name": "Zeta Person"},
+        )
+
+        by_email = await client.get("/v1/admin/users", params={"search": "findme"}, headers=headers)
+        by_name = await client.get("/v1/admin/users", params={"search": "zeta"}, headers=headers)
+
+        assert by_email.json()["total"] == 1
+        assert by_name.json()["total"] == 1
+
+    async def test_an_unknown_sort_column_is_rejected(self, client, session):
+        """An unvalidated sort column is an injection point — `ORDER BY password_hash`
+        reads a hash one binary-search request at a time."""
+        headers, _ = await _admin_client(client, session)
+
+        response = await client.get(
+            "/v1/admin/users", params={"sort_by": "password_hash"}, headers=headers
+        )
+        assert response.status_code == 422
+
+    async def test_the_directory_never_returns_a_password_hash(self, client, session):
+        """An admin console aggregates everything about everyone, which makes it the
+        most valuable thing on the platform to compromise."""
+        headers, _ = await _admin_client(client, session)
+
+        body = (await client.get("/v1/admin/users", headers=headers)).text
+        for leak in ("password_hash", "totp_secret", "token_hash", "csrf_hash"):
+            assert leak not in body
+
+    async def test_stats_report_the_window(self, client, session):
+        headers, _ = await _admin_client(client, session)
+
+        response = await client.get("/v1/admin/users/stats", params={"days": 7}, headers=headers)
+        body = response.json()
+
+        assert body["window_days"] == 7
+        assert body["total"] >= 1
+        assert body["banned"] == 0
+
+
+class TestAdminBan:
+    async def test_banning_records_a_reason_and_the_actor(self, client, session):
+        headers, _admin = await _admin_client(client, session)
+        target = await _register_and_login(client, "target@knowledgeos.dev")
+        target_id = target.json()["user"]["id"]
+
+        response = await client.post(
+            f"/v1/admin/users/{target_id}/ban",
+            json={"reason": "chargeback fraud"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+        detail = await client.get(f"/v1/admin/users/{target_id}", headers=headers)
+        assert detail.json()["banned_at"] is not None
+        assert detail.json()["ban_reason"] == "chargeback fraud"
+
+    async def test_a_ban_needs_a_reason(self, client, session):
+        """A ban with no reason is one nobody can review, and whoever applied it will
+        not remember by the time it is appealed."""
+        headers, _ = await _admin_client(client, session)
+        target = await _register_and_login(client, "target2@knowledgeos.dev")
+        target_id = target.json()["user"]["id"]
+
+        response = await client.post(
+            f"/v1/admin/users/{target_id}/ban", json={"reason": ""}, headers=headers
+        )
+        assert response.status_code == 422
+
+    async def test_an_operator_cannot_ban_themselves(self, client, session):
+        """The account that can ban is the account whose loss locks everyone out, and
+        a mis-click is unrecoverable without database access."""
+        headers, admin = await _admin_client(client, session)
+
+        response = await client.post(
+            f"/v1/admin/users/{admin.id}/ban", json={"reason": "oops"}, headers=headers
+        )
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "cannot_ban_self"
+
+    async def test_an_admin_cannot_ban_a_superadmin(self, client, session):
+        from sqlalchemy import select
+
+        from models import User
+
+        headers, _ = await _admin_client(client, session)
+        await _register_and_login(client, "root@knowledgeos.dev")
+        root = (
+            (await session.execute(select(User).where(User.email == "root@knowledgeos.dev")))
+            .scalars()
+            .one()
+        )
+        root.roles = ["superadmin"]
+        await session.commit()
+
+        response = await client.post(
+            f"/v1/admin/users/{root.id}/ban",
+            json={"reason": "attempted privilege escalation"},
+            headers=headers,
+        )
+        assert response.status_code == 403
+
+    async def test_a_ban_can_be_lifted(self, client, session):
+        headers, _ = await _admin_client(client, session)
+        target = await _register_and_login(client, "target3@knowledgeos.dev")
+        target_id = target.json()["user"]["id"]
+
+        await client.post(
+            f"/v1/admin/users/{target_id}/ban", json={"reason": "mistake"}, headers=headers
+        )
+        await client.post(f"/v1/admin/users/{target_id}/unban", headers=headers)
+
+        detail = await client.get(f"/v1/admin/users/{target_id}", headers=headers)
+        assert detail.json()["banned_at"] is None
+
+    async def test_banning_needs_write_not_just_read(self, client, session):
+        from sqlalchemy import select
+
+        from models import User
+
+        await client.post(
+            "/v1/auth/register", json={**REGISTRATION, "email": "support@knowledgeos.dev"}
+        )
+        support = (
+            (await session.execute(select(User).where(User.email == "support@knowledgeos.dev")))
+            .scalars()
+            .one()
+        )
+        # A support role that can read but not write. Staff answering "did my payment
+        # go through" should not also be able to ban an account.
+        support.roles = ["moderator"]
+        support.permissions = ["users:read"]
+        await session.commit()
+
+        login = await client.post(
+            "/v1/auth/login",
+            json={"email": "support@knowledgeos.dev", "password": REGISTRATION["password"]},
+        )
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        target = await _register_and_login(client, "target4@knowledgeos.dev")
+
+        assert (await client.get("/v1/admin/users", headers=headers)).status_code == 200
+        banned = await client.post(
+            f"/v1/admin/users/{target.json()['user']['id']}/ban",
+            json={"reason": "nope"},
+            headers=headers,
+        )
+        assert banned.status_code == 403
+
+
+class TestAdminAuditLog:
+    async def test_the_log_is_searchable_and_windowed(self, client, session):
+        headers, _ = await _admin_client(client, session)
+
+        response = await client.get(
+            "/v1/admin/audit-logs", params={"days": 7, "limit": 20}, headers=headers
+        )
+        body = response.json()
+
+        assert response.status_code == 200
+        assert body["total"] >= 1
+        assert body["limit"] == 20
+
+    async def test_it_can_be_filtered_by_action(self, client, session):
+        headers, _ = await _admin_client(client, session)
+
+        response = await client.get(
+            "/v1/admin/audit-logs", params={"action": "login"}, headers=headers
+        )
+        assert response.status_code == 200
+        assert all(row["action"] == "login" for row in response.json()["items"])
+
+    async def test_action_names_come_from_the_data(self, client, session):
+        """A hard-coded list goes stale the first time somebody adds an audited
+        action and forgets the file it lives in."""
+        headers, _ = await _admin_client(client, session)
+
+        response = await client.get("/v1/admin/audit-logs/actions", headers=headers)
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+        assert len(response.json()) >= 1

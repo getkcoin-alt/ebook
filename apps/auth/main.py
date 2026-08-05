@@ -9,13 +9,15 @@ from __future__ import annotations
 from knowledgeos_core import Components, create_app, get_logger, run
 from knowledgeos_core.app import AppContext
 from routers import (
+    admin_users_router,
+    audit_router,
     auth_router,
     internal_router,
     mfa_router,
     oauth_router,
     sessions_router,
 )
-from services import AccountService, KeyRing, MfaService, TokenService
+from services import AccountService, DirectoryService, KeyRing, MfaService, TokenService
 from services.oauth import OAuthService
 from settings import settings
 
@@ -33,6 +35,7 @@ async def _bootstrap(ctx: AppContext) -> None:
             "keyring": keyring,
             "tokens": TokenService(settings, keyring),
             "accounts": accounts,
+            "directory": DirectoryService(settings),
             "mfa": MfaService(settings),
             "oauth": OAuthService(settings, accounts),
         }
@@ -69,6 +72,8 @@ app = create_app(
     ),
     routers=[
         auth_router,
+        admin_users_router,
+        audit_router,
         mfa_router,
         sessions_router,
         oauth_router,

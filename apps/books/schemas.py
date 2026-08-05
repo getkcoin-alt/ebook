@@ -721,3 +721,30 @@ class CataloguePage(BaseSchema):
 
 
 CategoryNode.model_rebuild()
+
+
+class ModerationQueuePage(BaseSchema):
+    """Reviews awaiting a decision, across the catalogue.
+
+    Offset paged with a real total, unlike the public review feed. This is a
+    worklist: "37 waiting" is the number that decides whether someone starts on it,
+    and an infinite scroll cannot show that. It is also, by design, short.
+    """
+
+    items: list[ReviewOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class ModerationCounts(BaseSchema):
+    """How many reviews sit in each state. Feeds the queue's tab badges.
+
+    Every state is always present, so the UI never has to special-case a missing key
+    and render a blank where a zero belongs.
+    """
+
+    pending: int = 0
+    approved: int = 0
+    rejected: int = 0
+    flagged: int = 0

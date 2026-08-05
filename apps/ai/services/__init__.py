@@ -13,6 +13,7 @@ from services.providers import (
     ProviderRegistry,
     estimate_cost,
 )
+from services.reporting import ReportingService, UsageTotals
 
 __all__ = [
     "AnthropicProvider",
@@ -25,6 +26,8 @@ __all__ = [
     "ModerationService",
     "OpenAIProvider",
     "ProviderRegistry",
+    "ReportingService",
+    "UsageTotals",
     "cache_key",
     "estimate_cost",
     "parse_json_output",

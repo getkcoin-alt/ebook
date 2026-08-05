@@ -19,7 +19,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -303,3 +303,58 @@ class ReviewService:
             review.helpful_count = max(0, review.helpful_count + (2 if is_helpful else -2))
         await session.flush()
         return review
+
+    async def moderation_queue(
+        self,
+        session: AsyncSession,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        status: ReviewStatus | None = None,
+        book_id: uuid.UUID | None = None,
+    ) -> tuple[list[Review], int]:
+        """Reviews awaiting a decision, across the whole catalogue.
+
+        The per-book listing cannot serve this. A moderator does not know which book
+        has something pending — that is the entire question — so a queue that requires
+        a book id first is a queue nobody can work from.
+
+        Offset paged with a real total, unlike the public review feed. The queue is a
+        worklist: "37 waiting" is the number that decides whether someone starts, and
+        an infinite scroll cannot show it. It is also, by design, short.
+
+        Oldest first. A queue worked newest-first leaves its oldest items forever, and
+        those are exactly the ones a customer is waiting on.
+        """
+
+        def apply(stmt):  # type: ignore[no-untyped-def]
+            stmt = stmt.where(Review.deleted_at.is_(None))
+            stmt = stmt.where(
+                Review.status == (status if status is not None else ReviewStatus.PENDING)
+            )
+            if book_id is not None:
+                stmt = stmt.where(Review.book_id == book_id)
+            return stmt
+
+        total = int((await session.execute(apply(select(func.count(Review.id))))).scalar_one())
+        stmt = (
+            apply(select(Review))
+            .order_by(Review.created_at.asc(), Review.id)
+            .limit(limit)
+            .offset(offset)
+        )
+        return list((await session.execute(stmt)).scalars().all()), total
+
+    async def moderation_counts(self, session: AsyncSession) -> dict[str, int]:
+        """How many sit in each state. Feeds the queue's tab badges."""
+        rows = (
+            await session.execute(
+                select(Review.status, func.count(Review.id))
+                .where(Review.deleted_at.is_(None))
+                .group_by(Review.status)
+            )
+        ).all()
+        counts = {str(status): int(total) for status, total in rows}
+        # Every state present, so the UI does not have to special-case a missing key
+        # and render a blank where a zero belongs.
+        return {str(state): counts.get(str(state), 0) for state in ReviewStatus}

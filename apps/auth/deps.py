@@ -15,7 +15,7 @@ from knowledgeos_core import UnauthorizedError
 from knowledgeos_core.deps import Ctx, DbSession
 from knowledgeos_core.security import Principal
 from models import User
-from services import AccountService, KeyRing, MfaService, TokenService
+from services import AccountService, DirectoryService, KeyRing, MfaService, TokenService
 from services.oauth import OAuthService
 
 __all__ = [
@@ -27,6 +27,7 @@ __all__ = [
     "key_ring",
     "mfa_service",
     "oauth_service",
+    "require_permission",
     "token_service",
     "user_agent",
 ]
@@ -42,6 +43,10 @@ def token_service(ctx: Ctx) -> TokenService:
 
 def accounts_service(ctx: Ctx) -> AccountService:
     return ctx.extras["accounts"]  # type: ignore[no-any-return]
+
+
+def directory_service(ctx: Ctx) -> DirectoryService:
+    return ctx.extras["directory"]  # type: ignore[no-any-return]
 
 
 def mfa_service(ctx: Ctx) -> MfaService:
@@ -124,6 +129,23 @@ async def get_principal(
 
 
 CurrentPrincipal = Annotated[Principal, Depends(get_principal)]
+
+
+def require_permission(permission: str):  # type: ignore[no-untyped-def]
+    """Dependency factory: the caller must hold ``permission``.
+
+    A service-local twin of core's version, and it has to be. Core's resolves the
+    principal through the JWKS verifier that every *other* service uses — but this
+    service mints the tokens, so it verifies them against its own key ring instead
+    and never configures a verifier at all. Using core's factory here raises
+    "Components(auth=True) not set" on every admin request.
+    """
+
+    def dependency(principal: CurrentPrincipal) -> Principal:
+        principal.require_permission(permission)
+        return principal
+
+    return dependency
 
 
 async def get_authed_user(

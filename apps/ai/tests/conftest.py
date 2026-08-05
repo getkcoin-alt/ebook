@@ -210,13 +210,20 @@ def sibling_services() -> StubServices:
 
 @pytest.fixture
 def services(settings, providers, sibling_services):
-    from services import BudgetService, ChatService, Generator, ModerationService
+    from services import (
+        BudgetService,
+        ChatService,
+        Generator,
+        ModerationService,
+        ReportingService,
+    )
 
     budget = BudgetService(settings)
     generator = Generator(settings, providers, budget, None)
     return {
         "providers": providers,
         "budget": budget,
+        "reporting": ReportingService(settings),
         "generator": generator,
         "moderation": ModerationService(settings, generator),
         "chat": ChatService(settings, generator, providers, budget, sibling_services),
@@ -231,7 +238,7 @@ async def app(engine, settings, services, monkeypatch):
     from knowledgeos_core import redis as core_redis
     from knowledgeos_core.app import AppContext
     from knowledgeos_core.db import Database
-    from routers import assistant_router, internal_router
+    from routers import admin_router, assistant_router, internal_router
 
     fake = fakeredis.aioredis.FakeRedis()
     monkeypatch.setattr(core_redis.aioredis, "from_url", lambda *a, **k: fake)
@@ -242,7 +249,7 @@ async def app(engine, settings, services, monkeypatch):
     application = create_app(
         settings=settings,
         components=Components(redis=True, auth=False),
-        routers=[assistant_router, internal_router],
+        routers=[assistant_router, admin_router, internal_router],
         on_startup=[_bootstrap],
     )
 

@@ -333,3 +333,48 @@ class PruneResponse(BaseSchema):
     audit_logs: int = 0
     total: int = 0
     dry_run: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Admin directory
+# ---------------------------------------------------------------------------
+
+
+class AdminUserOut(UserOut):
+    """A user as an operator sees them.
+
+    Extends the self-view with the moderation state a console needs. It deliberately
+    carries nothing that would help someone impersonate the user — no hashes, no
+    tokens, no session ids, no MFA secret. An admin console is a high-value target
+    precisely because it aggregates, and the aggregate should stay boring.
+    """
+
+    banned_at: datetime | None = None
+    ban_reason: str | None = None
+    deleted_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class AdminUserPage(BaseSchema):
+    items: list[AdminUserOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class UserStats(BaseSchema):
+    window_days: int
+    total: int
+    new_in_window: int
+    verified: int
+    banned: int
+    #: Signed in inside the window — the only definition that does not count people
+    #: who registered years ago and never came back.
+    active_in_window: int
+
+
+class AuditLogPage(BaseSchema):
+    items: list[AuditLogOut]
+    total: int
+    limit: int
+    offset: int

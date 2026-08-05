@@ -19,6 +19,7 @@ from deps import (
     CursorLimit,
     DbSession,
     Entitlements,
+    Reviews,
     Taxonomy,
 )
 from knowledgeos_core import (
@@ -47,8 +48,12 @@ from schemas import (
     EntitlementOut,
     InternalPage,
     InternalPublishRequest,
+    ModerationCounts,
+    ModerationQueuePage,
     OwnedBooksRequest,
     OwnedBooksResponse,
+    ReviewOut,
+    ReviewStatus,
     UploadRequest,
     UploadTargetOut,
 )
@@ -71,11 +76,13 @@ def _offset_cursor(params: PageParams, total: int) -> str | None:
 
 
 WRITE = Depends(require_permission("books:write"))
+MODERATE = Depends(require_permission("reviews:moderate"))
 PUBLISH = Depends(require_permission("books:publish"))
 DELETE = Depends(require_permission("books:delete"))
 
 router = APIRouter(prefix="/v1/admin/books", tags=["admin"])
 internal_router = APIRouter(prefix="/internal", tags=["internal"])
+moderation_router = APIRouter(prefix="/v1/admin/moderation", tags=["admin"])
 
 
 async def _publish_event(ctx: Ctx, event_type: str, book: object) -> None:
@@ -554,3 +561,53 @@ async def internal_create_book(
     await _publish_event(ctx, EventType.BOOK_CREATED, book)
     logger.info("book.created_by_service", book_id=str(book.id), caller=caller)
     return BookDetail.model_validate(book)
+
+
+# ---------------------------------------------------------------------------
+# Review moderation queue
+# ---------------------------------------------------------------------------
+
+
+@moderation_router.get(
+    "/reviews",
+    response_model=ModerationQueuePage,
+    summary="Reviews awaiting moderation",
+    description=(
+        "The whole catalogue, not one book. The per-book review listing cannot serve "
+        "this: a moderator does not know which book has something pending — that is "
+        "the entire question — so a queue that needs a book id first is a queue "
+        "nobody can work from.\n\n"
+        "**Oldest first.** A queue worked newest-first leaves its oldest items "
+        "forever, and those are exactly the ones a customer is waiting on.\n\n"
+        'Offset paged with a real total, because this is a worklist: "37 waiting" '
+        "is the number that decides whether someone starts."
+    ),
+    dependencies=[MODERATE],
+)
+async def moderation_queue(
+    session: DbSession,
+    reviews: Reviews,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
+    review_status: Annotated[ReviewStatus | None, Query(alias="status")] = None,
+    book_id: Annotated[uuid.UUID | None, Query()] = None,
+) -> ModerationQueuePage:
+    rows, total = await reviews.moderation_queue(
+        session, limit=limit, offset=offset, status=review_status, book_id=book_id
+    )
+    return ModerationQueuePage(
+        items=[ReviewOut.model_validate(row) for row in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@moderation_router.get(
+    "/reviews/counts",
+    response_model=ModerationCounts,
+    summary="How many reviews sit in each state",
+    dependencies=[MODERATE],
+)
+async def moderation_counts(session: DbSession, reviews: Reviews) -> ModerationCounts:
+    return ModerationCounts(**await reviews.moderation_counts(session))

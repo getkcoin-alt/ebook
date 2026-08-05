@@ -126,6 +126,7 @@ async def app(engine, settings, services, monkeypatch):
         internal_router,
         library_router,
         lists_router,
+        moderation_router,
         publishers_router,
         reading_router,
         reviews_router,
@@ -152,6 +153,7 @@ async def app(engine, settings, services, monkeypatch):
             publishers_router,
             categories_router,
             admin_router,
+            moderation_router,
             entitlements_router,
             internal_router,
         ],
@@ -253,7 +255,13 @@ def as_admin(as_user):
         return as_user(
             ADMIN_ID,
             roles=["admin"],
-            permissions=["books:read", "books:write", "books:publish", "books:delete"],
+            permissions=[
+                "books:read",
+                "books:write",
+                "books:publish",
+                "books:delete",
+                "reviews:moderate",
+            ],
         )
 
     return _apply

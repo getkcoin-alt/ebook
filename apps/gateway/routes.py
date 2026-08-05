@@ -214,6 +214,12 @@ ROUTES: tuple[Route, ...] = (
     # be proxied to `admin`, which has never heard of a coupon.
     Route("/v1/admin", "admin", require_auth=True, timeout=60),
     Route("/v1/admin/books", "books", require_auth=True, timeout=60),
+    Route("/v1/admin/moderation", "books", require_auth=True),
+    # User administration lives on the auth service, which is also the only service
+    # that can verify its own tokens without JWKS.
+    Route("/v1/admin/users", "auth", require_auth=True),
+    Route("/v1/admin/audit-logs", "auth", require_auth=True, timeout=60),
+    Route("/v1/admin/ai", "ai", require_auth=True, timeout=60),
     Route("/v1/admin/orders", "payment", require_auth=True, timeout=60),
     Route("/v1/admin/coupons", "payment", require_auth=True),
     Route("/v1/admin/plans", "payment", require_auth=True),

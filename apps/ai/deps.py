@@ -9,7 +9,14 @@ from fastapi import Depends, Query
 
 from knowledgeos_core.deps import Ctx, CurrentUser, DbSession, OptionalUser
 from knowledgeos_core.security import Principal
-from services import BudgetService, ChatService, Generator, ModerationService, ProviderRegistry
+from services import (
+    BudgetService,
+    ChatService,
+    Generator,
+    ModerationService,
+    ProviderRegistry,
+    ReportingService,
+)
 
 __all__ = [
     "Budget",
@@ -20,6 +27,7 @@ __all__ = [
     "Moderation",
     "OptionalUser",
     "Providers",
+    "Reporting",
     "user_uuid",
 ]
 
@@ -36,6 +44,7 @@ Chat = Annotated[ChatService, Depends(_extra("chat"))]
 Moderation = Annotated[ModerationService, Depends(_extra("moderation"))]
 Budget = Annotated[BudgetService, Depends(_extra("budget"))]
 Providers = Annotated[ProviderRegistry, Depends(_extra("providers"))]
+Reporting = Annotated[ReportingService, Depends(_extra("reporting"))]
 
 
 def user_uuid(principal: Principal) -> uuid.UUID:

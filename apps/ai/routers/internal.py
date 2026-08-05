@@ -15,12 +15,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Query
-from sqlalchemy import case, func, select
 
-from deps import Budget, DbSession, Generate, Moderation, Providers
+from deps import Budget, DbSession, Generate, Moderation, Providers, Reporting
 from knowledgeos_core import MessageResponse, ServiceUnavailableError, get_logger
 from knowledgeos_core.deps import InternalCaller
-from models import Generation
 from schemas import (
     BatchGenerateRequest,
     BatchGenerateResponse,
@@ -28,7 +26,6 @@ from schemas import (
     EmbeddingResponse,
     GenerateRequest,
     GenerationOut,
-    GenerationStatus,
     ModerationRequest,
     ModerationResult,
     UsageSummary,
@@ -212,6 +209,9 @@ async def embeddings(
     response_model=UsageSummary,
     summary="Spend and volume (internal)",
     description=(
+        "The same figures as `GET /v1/admin/ai/usage`, behind an HMAC signature "
+        "instead of a bearer token — both call one service, so the console and the "
+        "ops endpoint cannot disagree about the bill.\n\n"
         "Cached and blocked requests are counted separately. Folding them into the "
         "total would make the cache look free and moderation look like it never ran."
     ),
@@ -220,66 +220,25 @@ async def usage(
     caller: InternalCaller,
     session: DbSession,
     budget: Budget,
+    reporting: Reporting,
     days: Annotated[int, Query(ge=1, le=90)] = 7,
 ) -> UsageSummary:
-    since = datetime.now(UTC) - timedelta(days=days)
-    window = [Generation.created_at >= since]
-
-    def _count(status_value):  # type: ignore[no-untyped-def]
-        # coalesce because SUM over an empty window is NULL, which would propagate
-        # into every derived figure as None.
-        return func.coalesce(func.sum(case((Generation.status == status_value, 1), else_=0)), 0)
-
-    row = (
-        await session.execute(
-            select(
-                func.count(Generation.id),
-                _count(GenerationStatus.CACHED),
-                _count(GenerationStatus.FAILED),
-                _count(GenerationStatus.BLOCKED),
-                func.coalesce(func.sum(Generation.input_tokens), 0),
-                func.coalesce(func.sum(Generation.output_tokens), 0),
-                func.coalesce(func.sum(Generation.cost_usd), 0.0),
-            ).where(*window)
-        )
-    ).one()
-    total, cached, failed, blocked, input_tokens, output_tokens, cost = row
-
-    by_kind = {
-        str(kind): int(count)
-        for kind, count in (
-            await session.execute(
-                select(Generation.kind, func.count(Generation.id))
-                .where(*window)
-                .group_by(Generation.kind)
-            )
-        ).all()
-    }
-    by_provider = {
-        str(provider): int(count)
-        for provider, count in (
-            await session.execute(
-                select(Generation.provider, func.count(Generation.id))
-                .where(*window, Generation.provider.is_not(None))
-                .group_by(Generation.provider)
-            )
-        ).all()
-    }
-
+    totals = await reporting.usage(session, days=days)
     state = await budget.state(session)
     return UsageSummary(
         window_days=days,
-        total_requests=int(total),
-        cached_requests=int(cached),
-        failed_requests=int(failed),
-        blocked_requests=int(blocked),
-        input_tokens=int(input_tokens),
-        output_tokens=int(output_tokens),
-        cost_usd=round(float(cost), 6),
+        total_requests=totals.total_requests,
+        cached_requests=totals.cached_requests,
+        failed_requests=totals.failed_requests,
+        blocked_requests=totals.blocked_requests,
+        input_tokens=totals.input_tokens,
+        output_tokens=totals.output_tokens,
+        cost_usd=totals.cost_usd,
         daily_limit_usd=settings.daily_cost_limit_usd,
         today_cost_usd=round(state.spent_usd, 6),
-        by_kind=by_kind,
-        by_provider=by_provider,
+        by_kind=totals.by_kind,
+        by_provider=totals.by_provider,
+        billable_requests=totals.billable_requests,
     )
 
 

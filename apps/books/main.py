@@ -17,6 +17,7 @@ from routers import (
     internal_router,
     library_router,
     lists_router,
+    moderation_router,
     publishers_router,
     reading_router,
     reviews_router,
@@ -89,6 +90,7 @@ app = create_app(
         admin_router,
         entitlements_router,
         internal_router,
+        moderation_router,
     ],
     on_startup=[_bootstrap],
     description=(

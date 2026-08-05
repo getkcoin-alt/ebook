@@ -247,6 +247,40 @@ class UsageSummary(BaseSchema):
     today_cost_usd: float
     by_kind: dict[str, int] = Field(default_factory=dict)
     by_provider: dict[str, int] = Field(default_factory=dict)
+    #: Requests that actually reached a provider. The denominator for "cost per
+    #: generation" — dividing by the total instead makes every cache hit look like it
+    #: made the model cheaper, which is the opposite of what happened.
+    billable_requests: int = 0
+
+
+class DailySpend(BaseSchema):
+    """One day of platform-wide spend, for the cost chart."""
+
+    day: str
+    cost_usd: float
+    request_count: int
+
+
+class SpendHistory(BaseSchema):
+    days: list[DailySpend] = Field(default_factory=list)
+    daily_limit_usd: float
+    total_usd: float
+
+
+class FailureOut(BaseSchema):
+    """A failed generation, without its prompt or its output.
+
+    An admin console is not a place to read customers' questions, so only the parts
+    that diagnose a failure are surfaced.
+    """
+
+    id: uuid.UUID
+    kind: TaskKind
+    provider: str | None = None
+    model: str | None = None
+    error: str | None = None
+    latency_ms: int | None = None
+    created_at: datetime
 
 
 class AiStatus(BaseSchema):

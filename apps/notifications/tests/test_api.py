@@ -319,6 +319,35 @@ async def test_a_duplicate_template_is_a_409(client, as_admin):
     assert (await client.post("/v1/admin/notifications/templates", json=body)).status_code == 409
 
 
+async def test_recreating_a_deactivated_template_is_a_409_not_a_500(client, as_admin):
+    """Deactivate, then create a replacement — the obvious way to revise a template.
+
+    The duplicate guard used the same lookup the dispatcher uses, which filters on
+    `is_active`; the unique constraint does not. So the guard passed, the insert hit
+    the constraint, and an operator saw an opaque 500. The answer they need is that
+    the row is still there and can be reactivated.
+    """
+    as_admin()
+    body = {"key": "revised.mail", "channel": "email", "body_text": "first"}
+    created = await client.post("/v1/admin/notifications/templates", json=body)
+    assert created.status_code == 201
+    template_id = created.json()["id"]
+
+    assert (
+        await client.delete(f"/v1/admin/notifications/templates/{template_id}")
+    ).status_code in (200, 204)
+
+    again = await client.post(
+        "/v1/admin/notifications/templates",
+        json={**body, "body_text": "second"},
+    )
+    assert again.status_code == 409, again.text
+    details = again.json()["error"]["details"]
+    assert details["is_active"] is False
+    assert details["template_id"] == template_id
+    assert "reactivate" in again.json()["error"]["message"].lower()
+
+
 async def test_a_template_key_with_illegal_characters_is_a_422(client, as_admin):
     as_admin()
     response = await client.post(

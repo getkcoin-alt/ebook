@@ -153,13 +153,36 @@ class TemplateService:
         return list((await session.execute(stmt)).scalars().all())
 
     async def create(self, session: AsyncSession, payload: TemplateCreate) -> Template:
-        existing = await self.find(
-            session, key=payload.key, channel=payload.channel, locale=payload.locale
+        # Deliberately not `find()`: that only returns active templates and falls
+        # back to English, while the unique constraint covers every row regardless
+        # of `is_active`. Checking with `find()` meant deactivating a template and
+        # creating its replacement — the obvious way to revise one through the admin
+        # API — passed the guard and then hit the constraint, surfacing as a 500
+        # with no indication of what was wrong.
+        clash = (
+            (
+                await session.execute(
+                    select(Template).where(
+                        Template.key == payload.key,
+                        Template.channel == payload.channel,
+                        Template.locale == payload.locale,
+                    )
+                )
+            )
+            .scalars()
+            .one_or_none()
         )
-        if existing is not None and existing.locale == payload.locale:
+        if clash is not None:
             raise ConflictError(
-                "A template already exists for that key, channel and locale.",
-                details={"key": payload.key, "channel": str(payload.channel)},
+                "A template already exists for that key, channel and locale."
+                + ("" if clash.is_active else " It is deactivated — reactivate it instead."),
+                details={
+                    "key": payload.key,
+                    "channel": str(payload.channel),
+                    "locale": payload.locale,
+                    "template_id": str(clash.id),
+                    "is_active": clash.is_active,
+                },
             )
         template = Template(
             key=payload.key,

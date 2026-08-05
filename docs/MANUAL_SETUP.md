@@ -240,29 +240,110 @@ the sequence are a question an auditor will ask — do not delete invoice rows.
 
 ## 10. 🟡 AI providers
 
-At least one is needed for the automation pipeline's description, summary and tagging
-stages. Without any, those stages are skipped and books ingest with metadata only.
+At least one is needed for the automation pipeline's description, SEO and tagging
+stages, and for the reader assistant. Without any, those stages are **skipped** and
+books ingest with metadata only — the pipeline does not fail.
 
 | Provider | Get a key | Variable |
 |---|---|---|
 | Anthropic *(default)* | <https://console.anthropic.com/settings/keys> | `ANTHROPIC_API_KEY=sk-ant-…` |
 | OpenAI | <https://platform.openai.com/api-keys> | `OPENAI_API_KEY=sk-…` |
-| Google | <https://aistudio.google.com/apikey> | `GOOGLE_AI_API_KEY=…` |
-| OpenRouter | <https://openrouter.ai/keys> | `OPENROUTER_API_KEY=sk-or-…` |
-| Ollama *(local, free)* | `ollama serve` | `OLLAMA_BASE_URL=http://localhost:11434` |
+
+Both may be set. `PROVIDER_ORDER` decides preference, and a provider that is
+rate-limited or down fails over to the next one rather than removing the feature.
 
 ```
-AI_DEFAULT_PROVIDER=anthropic
-AI_DEFAULT_MODEL=claude-sonnet-5
-AI_MONTHLY_BUDGET_USD=100
+PROVIDER_ORDER=anthropic,openai
+ANTHROPIC_MODEL=claude-sonnet-4-5-20250929
+OPENAI_MODEL=gpt-4o-mini
+
+# Hard daily ceiling for the whole platform, in USD. Reaching it returns 503
+# and serves nothing until the UTC day rolls over.
+DAILY_COST_LIMIT_USD=50
+# Per-user ceiling, so one account cannot consume the platform's budget.
+USER_DAILY_COST_LIMIT_USD=2
 ```
 
-**Set the budget.** The pipeline pauses AI stages when the month's spend crosses it,
-rather than quietly running up a bill. A bulk import of 5,000 books is thousands of
-LLM calls, and this is the guardrail between a normal invoice and a memorable one.
+**Set the ceilings.** They are a hard stop, not a target. Every other service on this
+platform fails by becoming unavailable, which is loud; this one fails by spending
+money, which is silent until the invoice arrives. A bulk import of 5,000 books is
+thousands of model calls, and this is the guardrail between a normal invoice and a
+memorable one.
 
-For development, Ollama with a small local model costs nothing and exercises the same
-code path.
+Costs shown in the UI are **estimates** from published per-token prices, not billing
+figures. An unrecognised model is assumed expensive on purpose — an unknown model that
+turns out cheaper just leaves budget unspent, while one assumed cheap could blow
+through the ceiling before anyone notices.
+
+---
+
+## 10a. 🟢 Ingestion pipeline (automation)
+
+Everything here has a working default. Two are worth a decision.
+
+```
+# OFF by default, and it should stay off in production. A pipeline that publishes
+# whatever it is handed puts machine-written copy in front of customers with nobody
+# having read it. Off means a finished job leaves the book ready for one click.
+AUTO_PUBLISH=false
+
+# Runs jobs inside the API process instead of dispatching to a Celery worker.
+# Development only — it puts a CPU-bound job on the event loop serving requests.
+INLINE_EXECUTION=false
+
+MAX_SOURCE_BYTES=524288000        # 500MB ceiling on an uploaded file
+MAX_DECOMPRESSED_BYTES=1073741824 # what an EPUB may expand to; a zip bomb is small
+ACCEPTED_FORMATS=pdf,epub
+```
+
+In production the pipeline needs a worker alongside the API:
+
+```
+celery -A tasks.celery_app worker -Q automation --concurrency=2
+```
+
+---
+
+## 10b. 🟢 Scheduler (workers)
+
+The scheduler drives every service's maintenance sweeps over HTTP. It needs two
+processes beyond the API, and the same `INTERNAL_API_SECRET` as everyone else — a
+mismatch means every scheduled job fails with a 401, which reads as a platform outage
+rather than a configuration error.
+
+```
+celery -A tasks.celery_app beat
+celery -A tasks.celery_app worker -Q maintenance
+```
+
+**Switch off the jobs your deployment cannot run.** A deployment without Meilisearch
+or without an AI key should not run those sweeps at all: a job that fails every hour
+by design teaches everyone to ignore the failure count, and then the one that matters
+goes unnoticed too.
+
+```
+DISABLED_JOBS=search.reconcile,search.prune-analytics,ai.prune
+```
+
+`GET /v1/admin/workers/health` reports `stale_jobs`. That is the field worth alerting
+on — a scheduler that has stopped produces no logs and no failures, so it is invisible
+in every other signal.
+
+---
+
+## 10c. 🟢 Admin dashboard
+
+Reads every other service, so it needs their URLs (below) and Redis. Without Redis it
+still works but fans out live on every page render, and a few operators with the
+dashboard open produce more internal traffic than the storefront.
+
+```
+PANELS=books,payment,search,notification,ai,automation,workers
+DASHBOARD_CACHE_TTL=60
+```
+
+Drop a service from `PANELS` and its card disappears — the right move on a deployment
+that does not run it.
 
 ---
 
@@ -338,6 +419,29 @@ Two things that are security-relevant, not cosmetic:
 In Railway, add the custom domain to the `frontend` and `gateway` services and point
 your DNS at the CNAME each one provides.
 
+### Service-to-service URLs
+
+Services find each other by `<name>_SERVICE_URL`. On Railway these resolve over the
+private network and never leave it; only the gateway and the frontend need a public
+domain.
+
+```
+AUTH_SERVICE_URL=http://auth.railway.internal:8000
+BOOKS_SERVICE_URL=http://books.railway.internal:8000
+SEARCH_SERVICE_URL=http://search.railway.internal:8000
+AI_SERVICE_URL=http://ai.railway.internal:8000
+PAYMENT_SERVICE_URL=http://payment.railway.internal:8000
+NOTIFICATION_SERVICE_URL=http://notification.railway.internal:8000
+AUTOMATION_SERVICE_URL=http://automation.railway.internal:8000
+ADMIN_SERVICE_URL=http://admin.railway.internal:8000
+WORKERS_SERVICE_URL=http://workers.railway.internal:8000
+```
+
+A missing URL is not a startup failure — it surfaces when something tries to call that
+service. The scheduler reports it as a failing job and the admin dashboard as an
+unavailable card, both of which read like an outage rather than a typo, so set them
+all even for services you are not using yet.
+
 ---
 
 ## 15. 🟢 Error tracking
@@ -359,7 +463,11 @@ Before the first production deploy:
 - [ ] `TRUSTED_HOSTS` set to your real hostnames
 - [ ] Every payment webhook secret configured, and a test event delivered successfully
 - [ ] `S3_PUBLIC_ENDPOINT_URL` set to the browser-reachable host, not the internal one
-- [ ] `AI_MONTHLY_BUDGET_USD` set to a number you are willing to be billed
+- [ ] `DAILY_COST_LIMIT_USD` and `USER_DAILY_COST_LIMIT_USD` set to numbers you are willing to be billed
+- [ ] `AUTO_PUBLISH=false` on automation, unless you have decided otherwise on purpose
+- [ ] `INLINE_EXECUTION=false` on automation, with a Celery worker actually running
+- [ ] `celery beat` **and** a `maintenance` worker running for the scheduler, or no sweep runs
+- [ ] `DISABLED_JOBS` set for anything this deployment does not run
 - [ ] SPF, DKIM and DMARC configured on the sending domain
 - [ ] Postgres backups enabled in Railway
 - [ ] Every default password from `.env.example` replaced

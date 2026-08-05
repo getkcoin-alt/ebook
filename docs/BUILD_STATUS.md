@@ -11,20 +11,20 @@ Last updated: 2026-08-05
 | | Status |
 |---|---|
 | Foundation (`packages/core-py`) | ✅ Complete · 63 tests |
-| Auth service | ✅ Complete · 81 tests |
+| Auth service | ✅ Complete · 96 tests |
 | API gateway | ✅ Complete · 39 tests |
-| Book service | ✅ Complete · 48 tests · 66 endpoints |
+| Book service | ✅ Complete · 54 tests · 68 endpoints |
 | Payment service | ✅ Complete · 156 tests · 42 endpoints |
 | Search service | ✅ Complete · 96 tests · 15 endpoints |
 | Notification service | ✅ Complete · 69 tests · 28 endpoints |
-| AI service | ✅ Complete · 48 tests · 12 endpoints |
+| AI service | ✅ Complete · 55 tests · 15 endpoints |
 | Automation service | ✅ Complete · 130 tests · 17 endpoints |
 | Workers service | ✅ Complete · 46 tests · 7 endpoints |
 | Admin service | ✅ Complete · 57 tests · 11 endpoints |
 | Frontend | 🟡 `types` + `config` packages only |
 | Infrastructure, CI, docs | ✅ Complete |
 
-**833 tests passing.** Ruff clean across everything committed.
+**861 tests passing.** Ruff clean across everything committed.
 
 Three numbers above correct earlier revisions of this page. The gateway and payment
 test counts said 42 and 154; the real figures are 39 and 156. The book service's
@@ -314,7 +314,7 @@ number that describes nothing.
 Being precise about this matters more than a green checkmark.
 
 **Verified — actually executed:**
-- All 833 tests, on every commit, via `scripts/test-python.sh`
+- All 861 tests, on every commit, via `scripts/test-python.sh`
 - `ruff check` and `ruff format --check`
 - Every service's migrations — auth, books, payment, search, notifications, ai,
   automation: upgrade, `alembic check` (no drift), downgrade

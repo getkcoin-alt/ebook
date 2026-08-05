@@ -616,3 +616,55 @@ async def test_an_explicit_notification_request_carries_its_own_template(
     )
     assert sent is True
     assert await _count(session, Notification) == 1
+
+
+# ---------------------------------------------------------------------------
+# SMTP message construction
+# ---------------------------------------------------------------------------
+
+
+def _smtp_provider(**overrides):
+    from services.channels import SMTPEmailProvider
+    from settings import Settings
+
+    defaults = {
+        "service_name": "notifications",
+        "smtp_host": "smtp.example.com",
+        "from_email": "noreply@books.example.com",
+        "from_name": "KnowledgeOS",
+    }
+    defaults.update(overrides)
+    return SMTPEmailProvider(Settings(**defaults))
+
+
+def test_outbound_mail_carries_the_headers_rfc_5322_requires():
+    """`Message-ID` and `Date`, neither of which aiosmtplib supplies.
+
+    Gmail does not filter a message without a Message-ID, it refuses it:
+
+        550-5.7.1 Messages missing a valid Message-ID header are not accepted
+
+    So this is the difference between mail being delivered and every message the
+    platform sends bouncing at the first major provider it reaches. Found by
+    watching a real password-reset email bounce out of a deployed environment.
+    """
+    from services.channels import Message
+
+    built = _smtp_provider()._build(
+        Message(destination="reader@example.net", subject="Reset your password", body_text="hi")
+    )
+
+    message_id = built["Message-ID"]
+    assert message_id and message_id.startswith("<") and message_id.endswith(">")
+    # Scoped to the sending domain, so the id is unique and attributable.
+    assert message_id.endswith("@books.example.com>")
+    assert built["Date"]
+
+
+def test_two_messages_do_not_share_a_message_id():
+    from services.channels import Message
+
+    provider = _smtp_provider()
+    first = provider._build(Message(destination="a@example.net", subject="s", body_text="b"))
+    second = provider._build(Message(destination="b@example.net", subject="s", body_text="b"))
+    assert first["Message-ID"] != second["Message-ID"]

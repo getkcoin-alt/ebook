@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass, field
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from typing import Any, Protocol
 
 import httpx
@@ -130,6 +131,16 @@ class SMTPEmailProvider:
         email["From"] = f"{self._settings.from_name} <{self._settings.from_email}>"
         email["To"] = message.destination
         email["Subject"] = message.subject or ""
+        # RFC 5322 requires both, and `aiosmtplib.send` does not add either. Gmail
+        # rejects outright rather than filtering:
+        #   550-5.7.1 Messages missing a valid Message-ID header are not accepted
+        # so without this every message this platform sends bounces at the first
+        # major provider it reaches. The domain is taken from the sender address so
+        # the id is globally unique and attributable to this deployment.
+        email["Message-ID"] = make_msgid(
+            domain=self._settings.from_email.rpartition("@")[2] or None
+        )
+        email["Date"] = formatdate(localtime=True)
         if self._settings.reply_to_email:
             email["Reply-To"] = self._settings.reply_to_email
         if unsubscribe := message.metadata.get("unsubscribe_url"):

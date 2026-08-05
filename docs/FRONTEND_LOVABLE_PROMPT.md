@@ -1,518 +1,379 @@
-# Lovable prompt — KnowledgeOS frontend
+# Frontend integration spec — KnowledgeOS
 
-Everything between the two `═══` rules is the prompt. Paste it into Lovable as the
-first message of a new project.
+**The frontend has been built.** It was built with Antigravity, not Lovable, against a
+typed mock API layer. This page is no longer a build prompt: it is the contract for
+switching that mock layer onto the real backend.
 
-**Read this page's last section ("After Lovable is done") before you paste** — it
-lists the three things that make integration a config change rather than a rewrite.
+> The filename is historical. Renaming it to `FRONTEND_INTEGRATION.md` is a `git mv`
+> and a grep for the old name — do it whenever it stops being useful to keep the link
+> stable.
+
+**Everything below is generated from the running services**, not from memory: 111
+user-facing endpoints across seven services, plus 67 admin/ops endpoints and 49
+HMAC-only internal routes the browser never sees.
 
 ---
 
-═══════════════════ COPY FROM HERE ═══════════════════
+## Where each side stands
 
-Build **KnowledgeOS** — the customer-facing web app for a premium e-book store and
-reader.
+| | Status |
+|---|---|
+| **Backend** | ✅ 10 services, 833 tests, 9 schemas / 63 tables, migrations verified |
+| **Frontend** | ✅ Built against `src/lib/api/` mocks (`VITE_USE_MOCK_API=true`) |
+| **Integration** | ⬜ Not yet done — this page is the contract for it |
 
-## The single most important instruction
-
-**Do not create a backend. Do not enable Supabase. Do not enable a database, auth,
-storage, or edge functions.**
-
-A complete REST API already exists and is deployed. Your job is the frontend only.
-Every piece of data comes from that API over HTTP. If you add Supabase auth or a
-database table, the work has to be thrown away.
-
-All API access goes through **one base URL** from an environment variable, which is
-already live:
+Live gateway:
 
 ```
 VITE_API_BASE_URL = https://gateway-production-c3e0.up.railway.app
 ```
 
-That is the API gateway. Every path in this prompt is relative to it — the gateway
-routes `/v1/auth`, `/v1/books`, `/v1/search`, `/v1/orders`, `/v1/checkout`,
-`/v1/notifications` and the rest to the right service behind it. **Never call a
-service directly; there is only this one host.**
+Every path below is relative to it. The gateway routes `/v1/auth`, `/v1/books`,
+`/v1/search`, `/v1/orders`, `/v1/notifications`, `/v1/ai` and the rest to the right
+service. **Never call a service directly; there is only this one host.**
 
-Check it with `GET /health` and read the live, aggregated API documentation at
-`/docs` — that is the authoritative contract if anything below is ambiguous.
-
-Build against mocks first anyway, so a backend hiccup never blocks UI work:
-
-- Put every network call behind a typed client in `src/lib/api/`.
-- Add `src/lib/api/mock/` with realistic fixture data.
-- Switch between them with `VITE_USE_MOCK_API` (default `true`).
-- **The mock adapter and the real adapter must implement the same TypeScript
-  interface**, so flipping the flag is the entire integration.
-
-Never call `fetch` directly from a component. Components call hooks; hooks call the
-client; the client picks mock or real.
-
-## Stack
-
-React + TypeScript + Tailwind + shadcn/ui (Lovable's default). Add TanStack Query for
-server state and React Router for routing. No state management library beyond
-Query + React context.
+`GET /health` for liveness, `/docs` for the live aggregated OpenAPI — that is the
+authoritative contract if anything here is ambiguous.
 
 ---
 
-## The design bar
+## What the frontend already assumes, and whether it is right
 
-This should feel like **Linear, Raycast and Apple Books** — not like a template.
-Specifically:
+The mock layer was written against assumptions. Here is each one checked against the
+implementation.
 
-- **Restraint.** Lots of whitespace, few borders, one accent colour. No gradients on
-  buttons, no drop shadows on cards, no emoji in the UI.
-- **Type is the design.** A real typographic scale. Book titles are the loudest thing
-  on any page. Use `Inter` for UI and a serif (`Source Serif 4`) for reading.
-- **Motion is functional.** 150–200ms ease-out on state changes. Things that appear
-  should fade + translate 4px, not bounce or scale.
-- **Dark mode is not an afterthought.** Design it first; light mode second. Persist
-  the choice, respect `prefers-color-scheme` on first visit.
-- **Every list has three states**: loading (skeletons matching final layout, never a
-  spinner), empty (an illustration + one sentence + one action), and error (what
-  failed + a retry button).
-- **Keyboard first.** Visible focus rings everywhere. Full keyboard navigation.
+| Frontend assumption | Backend reality | |
+|---|---|---|
+| In-memory access token | Access token in the `POST /v1/auth/login` body | ✅ |
+| `httpOnly` refresh cookie | `kos_refresh`, httpOnly, set by auth | ✅ |
+| `X-CSRF-Token` header | Readable `kos_csrf` cookie **and** `csrf_token` in the login body | ✅ |
+| Concurrent 401 refresh queue | Correct and necessary — refresh **rotates** the token | ✅ |
+| `formatMoney(minor, currency)` | Money is an integer of the minor unit everywhere | ✅ |
+| Cursor infinite scroll | `{ items, next_cursor, has_more }` | ✅ |
+| Idempotency key per attempt | `Idempotency-Key: <uuid>` header | ✅ |
+| CGST/SGST/IGST breakdown | `tax: { percent, cgst_minor, sgst_minor, igst_minor, total_minor, place_of_supply }` | ✅ |
+| 2-step MFA challenge | `{ mfa_required: true, challenge_token }` → `POST /v1/auth/login/mfa` | ✅ |
+| Error copy-to-clipboard request id | `error.request_id` on every failure | ✅ |
+| "about N results" | ⚠️ **Search only.** The catalogue has no total | ⚠️ |
+| `VITE_FEATURE_AI` build flag | ⚠️ Should be **runtime**: `GET /v1/ai/status` | ⚠️ |
+| 10s debounced progress save | ⚠️ Sends a **delta**, not a total — see below | ⚠️ |
 
-### Command palette (⌘K / Ctrl+K)
+### The three that need a change
 
-The signature interaction. Opens instantly, over everything. Sections: recent
-searches, book results (live as you type), quick actions (Go to library, Toggle
-theme, Account settings), and navigation. Arrow keys move, Enter opens, Esc closes.
-Debounce the search 200ms.
+**1. The catalogue has no result count.** `GET /v1/books` returns
+`{ items, next_cursor, has_more }` and deliberately no `total` — counting a filtered
+catalogue costs a full scan on every page of an infinite scroll. Only `GET /v1/search`
+returns a count, and it is `estimated_total`, from a capped scan. Render it as
+"about N results" and never as an exact figure; it will disagree with a `COUNT(*)`.
 
-### Other keyboard shortcuts
+If the catalogue page needs counts, pass `?include_facets=true` and read
+`facets` — you pay for the count once instead of on every page.
 
-`/` focus search · `g` then `l` library · `g` then `h` home · `?` shortcut sheet ·
-`Esc` close any overlay. In the reader: `←`/`→` pages, `f` fullscreen, `b` bookmark.
+**2. AI availability is a runtime fact, not a build-time flag.** A deployment with no
+`ANTHROPIC_API_KEY` has a working AI service that returns 503, and the daily cost
+ceiling can exhaust mid-day. `GET /v1/ai/status` answers honestly:
 
----
+```json
+{ "available": true, "providers": ["anthropic"], "model": "claude-sonnet-4-5-...",
+  "budget_remaining_usd": 41.9, "cache_enabled": true, "moderation_enabled": true }
+```
 
-## Pages
+Gate the assistant drawer on `available`, fetched once per session. Keep
+`VITE_FEATURE_AI` as a kill switch if you like, but `false` from either source should
+hide the affordance — offering a button that always 503s is worse than not offering it.
 
-### Public
+**3. Reading progress `session_seconds` is a delta.** It is accumulated server-side and
+never overwritten, so a replayed sync cannot rewrite total reading time:
 
-**`/` Home** — Hero with the command palette teaser. "Trending searches" row.
-Curated shelves as horizontal scrollers (Featured, New this week, Free to read).
-Category grid.
+```
+PUT /v1/reading-progress/{book_id}
+{ "position": "epubcfi(/6/14!/4/2/1:0)", "percent": 34.2,
+  "page_number": 88, "session_seconds": 45 }
+```
 
-**`/books` Catalogue** — The core browsing surface. Left sidebar with facet filters
-(category, author, language, format, price range, minimum rating). Grid/list toggle.
-Sort dropdown. **Infinite scroll using the cursor from the API** — never page
-numbers. Filters live in the URL query string so a filtered view is shareable and
-survives a refresh.
-
-**`/books/:slug` Book detail** — Large cover, title, authors, rating. Sticky buy
-panel on desktop. Tabbed: Description / Details / Reviews. "Related books" carousel.
-The primary button is state-dependent: **Buy · Read now · In your library**.
-
-**`/authors/:slug`, `/categories/:slug`** — Listing pages, same grid component.
-
-**`/search`** — Full search results with facets, matching the catalogue layout, plus
-the query echoed and a result count phrased as "about N results" (the API's total is
-an estimate, never exact).
-
-### Auth
-
-**`/login`, `/register`, `/forgot-password`, `/reset-password`, `/verify-email`** —
-Centred cards, minimal. Real-time password strength on register. OAuth buttons
-(Google, GitHub) that redirect to the API's OAuth start URL.
-
-**Two-step login:** `POST /v1/auth/login` may return `{ mfa_required: true,
-challenge_token, expires_in }` instead of tokens. In that case show a 6-digit code
-input and submit to `POST /v1/auth/login/mfa` with the challenge token. Support a
-"use a recovery code instead" link — the same endpoint accepts either.
-
-### Authenticated
-
-**`/library`** — Owned books. Grid with a reading-progress ring on each cover.
-Filter: All / In progress / Finished / Downloaded.
-
-**`/read/:bookId`** — The reader. This is the app's centrepiece.
-- Distraction-free: chrome fades out after 3s of no mouse movement, returns on move.
-- Controls: font size, line height, font family (serif/sans), theme (light / sepia /
-  dark), margin width.
-- Progress bar at the bottom; "12 min left in this chapter".
-- Bookmarks and highlights. `b` toggles a bookmark at the current position.
-- Progress saves automatically — **debounce to at most one write every 10s**, and
-  flush on unmount and on `visibilitychange`.
-
-**`/wishlist`, `/collections`, `/collections/:id`** — Saved books. Collections are
-user-created named lists; support drag to reorder.
-
-**`/orders`, `/orders/:id`** — Order history and detail with a download-invoice link.
-
-**`/checkout`** — Cart review → billing details → payment. See the payment flow below.
-
-**`/account`** — Tabbed: Profile · Security (password, 2FA setup with a QR code,
-active sessions with a "revoke" button per session) · Notifications (preference
-toggles) · Connected accounts.
-
-**`/notifications`** — The full list behind the bell icon.
-
-### Stub these (the API is not built yet)
-
-- **AI assistant** — Design the UI (a chat drawer, "Ask about this book") but wire it
-  to mock responses only, behind a `VITE_FEATURE_AI=false` flag.
-- **Admin dashboard** — Do not build it at all. Skip entirely.
+Send **seconds read since the last successful sync**, not the running total. Sending
+the total makes `total_reading_seconds` grow quadratically. The response carries the
+server's `total_reading_seconds`; treat that as authoritative and reset your local
+counter on success.
 
 ---
 
-## API contracts
+## Conventions
 
-Base URL: `VITE_API_BASE_URL`. Every path below is relative to it.
-
-### Conventions that apply everywhere
-
-**Errors.** Every failure returns this shape, with the HTTP status carrying the
-meaning:
+**Errors.** Every failure, from every service:
 
 ```json
 { "error": { "code": "book_not_purchasable", "message": "Human readable.",
-             "details": {}, "request_id": "..." } }
+             "details": {}, "request_id": "01J..." } }
 ```
 
-Show `message` to the user. Never show `code` or `request_id` in the UI — put
-`request_id` in a copy-to-clipboard affordance on the error page only.
+Show `message`. Never show `code` or `request_id` in normal UI — `request_id` belongs
+in the copy-to-clipboard affordance on the error state, which the frontend already has.
 
-**Money is always an integer of the currency's minor unit** — `price_minor: 49900`
-means ₹499.00. Never do float arithmetic on it. Format with
-`Intl.NumberFormat(locale, { style: 'currency', currency }).format(minor / 100)`.
-A helper `formatMoney(minor, currency)` should be the only place that division
-appears.
+**Money is always an integer of the currency's minor unit.** `price_minor: 49900` is
+₹499.00. Never do float arithmetic on it.
 
-**Pagination is cursor-based** on the catalogue, search, orders and notifications:
+**Cursor pagination** on the catalogue, search, orders, notifications and library:
+`{ items, next_cursor, has_more }`, requested with `?cursor=<next_cursor>&limit=20`.
+`next_cursor: null` means the end. **No totals, no page numbers.**
 
-```json
-{ "items": [...], "next_cursor": "eyJ2Ijoi...", "has_more": true }
-```
-
-Pass `?cursor=<next_cursor>&limit=20`. When `next_cursor` is null there are no more
-pages. **There is no total and no page number** — build infinite scroll, not a pager.
-(Taxonomy lists — authors, publishers, categories — use `?page=1&limit=20` and return
-`{ items, meta: { page, limit, total, pages } }`.)
+**Offset pagination** on the small near-static taxonomies only — authors, publishers,
+categories — with `?page=1&limit=20` returning `{ items, meta: { page, limit, total, pages } }`.
+Those are the only endpoints where a pager is the right control.
 
 **Dates** are ISO 8601 UTC strings.
 
-### Authentication
-
-```
-POST /v1/auth/register     { email, password, full_name? }
-POST /v1/auth/login        { email, password, device_label? }
-POST /v1/auth/login/mfa    { challenge_token, code }
-POST /v1/auth/refresh      {}          ← send credentials: 'include'
-POST /v1/auth/logout       {}
-POST /v1/auth/logout/all   {}
-GET  /v1/auth/me
-PATCH /v1/auth/me          { full_name?, avatar_url?, locale? }
-POST /v1/auth/change-password    { current_password, new_password }
-POST /v1/auth/forgot-password    { email }
-POST /v1/auth/reset-password     { token, new_password }
-POST /v1/auth/verify-email       { token }
-POST /v1/auth/verify-email/resend
-GET  /v1/auth/sessions
-DELETE /v1/auth/sessions/{id}
-GET  /v1/auth/mfa/status
-POST /v1/auth/mfa/enroll        → returns a TOTP secret + otpauth URI for a QR code
-POST /v1/auth/mfa/confirm       { code }
-POST /v1/auth/mfa/disable       { password }
-POST /v1/auth/mfa/recovery-codes
-GET  /v1/auth/oauth/providers
-GET  /v1/auth/oauth/{provider}/start    ← redirect the browser here
-GET  /v1/auth/oauth/accounts
-DELETE /v1/auth/oauth/accounts/{provider}
-```
-
-Login/refresh return:
-
-```json
-{ "access_token": "eyJ...", "token_type": "Bearer", "expires_in": 900,
-  "csrf_token": "...", "user": { "id", "email", "full_name", "avatar_url",
-  "roles": [], "permissions": [], "email_verified", "mfa_enabled", "is_active" } }
-```
-
-**Token handling — get this right, it is the part that is painful to retrofit:**
-
-- The **access token lives in memory only** (a React context / module variable).
-  Never `localStorage`, never a cookie you set. It expires in 15 minutes.
-- The **refresh token is an httpOnly cookie** the API sets. Your code cannot read it
-  and must not try. Every request to `/v1/auth/refresh` and `/v1/auth/logout` needs
-  `credentials: 'include'`.
-- Send the access token as `Authorization: Bearer <token>` on every other request.
-- On a **401**, call refresh **once**, then retry the original request. If refresh
-  also fails, clear state and route to `/login`.
-- **Queue concurrent 401s.** If five requests fail at once, refresh once and replay
-  all five — do not fire five refreshes. This matters: the API rotates refresh tokens
-  and treats a replayed one as a compromise, which logs the user out everywhere.
-- Send the `csrf_token` from the login response back as an `X-CSRF-Token` header when
-  calling refresh.
-- Refresh **proactively** at ~80% of `expires_in` so requests rarely see a 401 at all.
-
-### Catalogue
-
-```
-GET /v1/books?q=&category=&author=&publisher=&language=&format=
-             &min_price_minor=&max_price_minor=&free_only=
-             &sort=&cursor=&limit=&include_facets=true
-GET /v1/books/{slug}
-GET /v1/books/{slug}/related
-GET /v1/books/{bookId}/access          ← may this user read it?
-GET /v1/books/{bookId}/download?format=pdf
-GET /v1/authors?page=&limit=&q=        · GET /v1/authors/{slug}
-GET /v1/categories?page=&limit=        · GET /v1/categories/{slug}
-GET /v1/categories/tree                ← whole hierarchy in one response
-GET /v1/publishers?page=&limit=        · GET /v1/publishers/{slug}
-```
-
-A book in a list looks like:
-
-```json
-{ "id", "slug", "title", "subtitle", "status", "language",
-  "price_minor": 49900, "discount_price_minor": null, "effective_price_minor": 49900,
-  "currency": "INR", "cover_key", "thumbnail_key",
-  "available_formats": ["pdf","epub"], "rating_average": 4.3, "rating_count": 128,
-  "view_count", "published_at",
-  "authors": [{ "id", "name", "slug", "avatar_key" }],
-  "categories": [{ "id", "name", "slug", "icon" }] }
-```
-
-**Always display `effective_price_minor`.** When `discount_price_minor` is set, show
-`price_minor` struck through beside it.
-
-**`cover_key` and `thumbnail_key` are storage keys, not URLs.** Build the URL as
-`${VITE_CDN_BASE_URL}/${cover_key}`. Put that in one helper — `coverUrl(key, size)` —
-and use a neutral placeholder when the key is null.
-
-**`/download` returns a short-lived signed URL**, not the file. Fetch it, then set
-`window.location.href` to the returned `url`. If it returns **402**, the user does
-not own the book — show the buy panel. **403** means their access is read-only.
-
-### Library, reading, engagement
-
-```
-GET  /v1/library?cursor=&limit=           · GET /v1/library/detailed
-GET  /v1/reading-progress
-GET  /v1/reading-progress/{bookId}
-PUT  /v1/reading-progress/{bookId}    { position, percent, location? }
-GET,POST /v1/bookmarks                · PATCH,DELETE /v1/bookmarks/{id}
-GET,POST /v1/wishlist                 · DELETE /v1/wishlist/{bookId}
-GET,POST /v1/collections              · GET,PATCH,DELETE /v1/collections/{id}
-POST /v1/collections/{id}/items       · DELETE /v1/collections/{id}/items/{bookId}
-GET,POST /v1/books/{bookId}/reviews
-PATCH,DELETE /v1/reviews/{id}         · POST /v1/reviews/{id}/vote
-```
-
-A library item is `{ book: BookListItem, source, granted_at, expires_at,
-can_download, progress_percent }`.
-
-A review has a `status` of `pending | approved | rejected | flagged`. Show a
-"Awaiting moderation" note on the author's own pending review; hide other people's
-non-approved reviews entirely.
-
-### Search
-
-```
-GET /v1/search?q=&filter=category:fiction&filter=author:jane-doe
-              &sort=&min_price_minor=&max_price_minor=&min_rating=
-              &free_only=&limit=&cursor=&facets=true
-GET /v1/search/suggest?q=&limit=8
-GET /v1/search/trending?limit=10
-GET /v1/search/related/{bookId}
-POST /v1/search/click   { query_id, book_id, position }
-```
-
-**Filters are repeatable `name:value` query parameters** — `?filter=category:fiction
-&filter=category:history` means "fiction OR history". Different names AND together.
-Allowed names: `category`, `author`, `language`, `format`, `tag`, `publisher`.
-
-The search response carries a **`query_id`**. When a user clicks a result, POST it to
-`/v1/search/click` with the zero-based position. Fire and forget — never block
-navigation on it.
-
-`/suggest` powers the command palette. Results come back interleaved by kind
-(`book` | `author` | `category` | `query`), each with `text`, `href` and an optional
-`subtitle`. **Render them in the order given** — do not re-sort by score.
-
-`estimated_total` is an estimate. Render "about 1,240 results", never "1,240 results".
-
-### Checkout and payments
-
-```
-GET  /v1/payments/providers
-POST /v1/checkout/quote      { items: [{ book_id, quantity }], coupon_code?, billing? }
-POST /v1/coupons/validate    { code, items: [...] }
-POST /v1/orders              { items, coupon_code?, provider?, billing?, return_url? }
-GET  /v1/orders?cursor=&limit=       · GET /v1/orders/{id}
-POST /v1/orders/{id}/cancel  { reason? }
-POST /v1/payments/verify     { order_id, provider, provider_order_id,
-                               provider_payment_id, signature }
-GET  /v1/invoices            · GET /v1/invoices/{id}
-GET  /v1/plans               · GET,POST /v1/subscriptions
-POST /v1/subscriptions/{id}/cancel   { at_period_end }
-```
-
-**The cart is client-side only** — persist it in `localStorage`. There is no cart
-API. The cart holds book ids and quantities; it never holds prices.
-
-**Never compute a total in the frontend.** Call `/v1/checkout/quote` and display what
-it returns. It is the only source of the subtotal, discount, tax and total. Re-quote
-whenever the cart or the coupon changes (debounce the coupon field 400ms).
-
-The quote returns:
-
-```json
-{ "lines": [{ "book_id", "title", "quantity", "unit_price_minor",
-              "line_total_minor", "already_owned": false }],
-  "subtotal_minor", "discount_minor", "taxable_minor",
-  "tax": { "percent": 18, "cgst_minor", "sgst_minor", "igst_minor",
-           "total_minor", "place_of_supply" },
-  "total_minor", "currency", "coupon_applied": true, "coupon_message": null }
-```
-
-Show the GST breakdown in the order summary: **CGST + SGST as two lines** when both
-are non-zero, **IGST as one line** otherwise. Prices already include tax, so the
-total equals the sum of the listed prices minus any discount — do not add tax on top.
-
-Mark any line with `already_owned: true` clearly ("Already in your library") and let
-the user remove it.
-
-**A bad coupon returns HTTP 200** with `coupon_applied: false` and a readable
-`coupon_message`. Show that message inline under the field — it is not an error
-state, so no red banner and no toast.
-
-**The checkout flow:**
-
-1. `GET /v1/payments/providers` → which gateways exist, plus the *public* keys.
-2. `POST /v1/orders` with an **`Idempotency-Key: <uuid>` header** — generate one UUID
-   per checkout attempt and reuse it across retries. This is what makes a
-   double-clicked Buy button safe.
-3. The response is a checkout session: `{ order, provider, provider_order_id,
-   publishable_key, checkout_url, client_secret, amount_minor, currency }`.
-4. **Razorpay** → open Razorpay Checkout with `publishable_key` and
-   `provider_order_id`. On success it hands you `razorpay_payment_id`,
-   `razorpay_order_id` and `razorpay_signature` — POST all three to
-   `/v1/payments/verify`.
-   **Stripe** → redirect to `checkout_url`.
-5. **`amount_minor: 0` means the order settled instantly** (free book, or a 100%
-   coupon). There is no gateway step — go straight to the success page.
-6. On the success page, **poll `GET /v1/orders/{id}` until `status` is `paid`** (every
-   2s, give up after 30s and show "we'll email you when it completes"). The webhook
-   may land before or after the redirect; do not assume either.
-
-Order statuses: `pending | awaiting_payment | paid | failed | cancelled | refunded |
-partially_refunded`.
-
-### Notifications
-
-```
-GET  /v1/notifications?cursor=&limit=&unread_only=
-GET  /v1/notifications/unread-count
-POST /v1/notifications/read              { notification_ids?: [] }
-POST /v1/notifications/{id}/archive
-GET,PUT /v1/notifications/preferences
-POST /v1/notifications/unsubscribe       { token, category? }
-GET  /v1/notifications/channels
-```
-
-The bell polls `/unread-count` every 60s — **not the full list**. Fetch the list only
-when the dropdown opens.
-
-Preferences come back with a `locked: true` flag on transactional categories
-(receipts, password resets). **Render those toggles disabled but visible**, with a
-tooltip explaining they are essential account messages. Do not hide them.
-
-`/unsubscribe` is reached from an email link at `/unsubscribe?token=...` and works
-**without being signed in** — build that page as a public route.
+**Idempotency.** Send `Idempotency-Key: <uuid>` on `POST /v1/orders` and
+`POST /v1/payments/verify`. Generate it once per checkout *attempt* and reuse it across
+retries of that attempt — a new key on retry creates a second order. Reusing a key with
+a *different* body is rejected with `idempotency_key_reuse`.
 
 ---
 
-## Non-negotiables
+## Endpoint inventory
 
-1. **No backend.** No Supabase, no database, no server functions. Only HTTP calls to
-   `VITE_API_BASE_URL`.
-2. **One API layer.** `src/lib/api/` with a client per domain (`auth.ts`, `books.ts`,
-   `search.ts`, `payments.ts`, `notifications.ts`), each exporting typed functions.
-   Mock and real adapters share one interface.
-3. **Types mirror the API.** Put them in `src/lib/api/types.ts`. Money fields end in
-   `_minor` and are `number`. Ids are `string` (UUIDs).
-4. **Access token in memory only.** Never localStorage.
-5. **Never compute prices client-side.** Quote endpoint only.
-6. **Cursor pagination, not page numbers**, everywhere the API uses cursors.
-7. **Accessible.** Semantic HTML, labelled inputs, focus traps in modals, `aria-live`
-   on toasts, WCAG AA contrast in both themes.
-8. **Responsive from 360px up.** The reader and the catalogue must both work on a
-   phone.
+111 user-facing endpoints. Admin and operations endpoints (`/v1/admin/*`,
+`/v1/automation/*`) are omitted — they need staff permissions and are not part of the
+customer app.
 
-## Environment variables
+### Auth — `auth` service
 
-```
-VITE_API_BASE_URL=https://gateway-production-c3e0.up.railway.app
-VITE_CDN_BASE_URL=
-VITE_USE_MOCK_API=true
-VITE_FEATURE_AI=false
-```
+- `POST /v1/auth/register` — Create an account
+- `POST /v1/auth/login` — Sign in with email and password
+- `POST /v1/auth/login/mfa` — Complete a two-factor sign-in
+- `POST /v1/auth/refresh` — Exchange a refresh token for a new access token
+- `POST /v1/auth/logout` — Sign out of this device
+- `POST /v1/auth/logout/all` — Sign out of every device
+- `GET /v1/auth/me` — Get the signed-in user
+- `PATCH /v1/auth/me` — Update your profile
+- `POST /v1/auth/change-password` — Change your password
+- `POST /v1/auth/forgot-password` — Request a password reset link
+- `POST /v1/auth/reset-password` — Set a new password using a reset token
+- `POST /v1/auth/verify-email` — Confirm an email address
+- `POST /v1/auth/verify-email/resend` — Resend the verification email
+- `GET /v1/auth/sessions` — List your active sessions
+- `DELETE /v1/auth/sessions/{session_id}` — Revoke one session
+- `GET /v1/auth/mfa/status` — Two-factor status
+- `POST /v1/auth/mfa/enroll` — Begin two-factor enrolment
+- `POST /v1/auth/mfa/confirm` — Confirm enrolment and activate two-factor
+- `POST /v1/auth/mfa/disable` — Turn off two-factor authentication
+- `POST /v1/auth/mfa/recovery-codes` — Regenerate recovery codes
+- `GET /v1/auth/oauth/providers` — List configured OAuth providers
+- `GET /v1/auth/oauth/{provider}/start` — Begin an OAuth sign-in
+- `GET /v1/auth/oauth/{provider}/callback` — OAuth callback
+- `GET /v1/auth/oauth/accounts` — List linked OAuth accounts
+- `DELETE /v1/auth/oauth/accounts/{provider}` — Unlink an OAuth account
+- `GET /v1/auth/permissions` — List the permissions each role grants
 
-`VITE_CDN_BASE_URL` is intentionally empty for now — object storage does not have a
-public domain yet. **`coverUrl(key, size)` must handle that**: when the base URL is
-empty or the key is null, return a generated placeholder (a gradient derived from the
-book id, with the title's initials) rather than a broken image. Covers are the single
-most visible element of this app, so the fallback needs to look deliberate, not like
-a failure. When the CDN domain lands, setting one variable fixes every image.
+### Catalogue — `books` service
 
-Commit a `.env.example` with these and read them through one `src/lib/config.ts` —
-never `import.meta.env` scattered through components.
+- `GET /v1/books` — Browse the catalogue
+- `GET /v1/books/{slug}` — Get a book by slug
+- `GET /v1/books/{slug}/related` — Books readers also liked
+- `GET /v1/books/{book_id}/access` — Can the signed-in user read this book?
+- `GET /v1/books/{book_id}/download` — Get a signed download URL
+- `GET /v1/books/{book_id}/reviews` — List reviews for a book
+- `POST /v1/books/{book_id}/reviews` — Write a review
+- `PATCH /v1/reviews/{review_id}` — Edit your own review
+- `DELETE /v1/reviews/{review_id}` — Delete your own review
+- `POST /v1/reviews/{review_id}/vote` — Mark a review helpful or unhelpful
 
-Start with the design system, the API layer with mocks, and the catalogue. Then the
-book detail page, auth, the library and the reader, then checkout.
+### Taxonomy — `books` service *(offset paginated)*
 
-═══════════════════ COPY TO HERE ═══════════════════
+- `GET /v1/authors` · `GET /v1/authors/{slug}`
+- `GET /v1/publishers` · `GET /v1/publishers/{slug}`
+- `GET /v1/categories` · `GET /v1/categories/tree` · `GET /v1/categories/{slug}`
+
+*(The `POST`/`PATCH`/`DELETE` variants on these exist but need `books:write`.)*
+
+### Search — `search` service
+
+- `GET /v1/search` — Search the catalogue
+- `GET /v1/search/suggest` — Autocomplete
+- `GET /v1/search/trending` — Trending searches
+- `GET /v1/search/related/{book_id}` — Books similar to one book
+- `POST /v1/search/click` — Record which result was opened
+
+### Library and reading — `books` service
+
+- `GET /v1/library` — Books the signed-in user can read
+- `GET /v1/library/detailed` — Library with entitlement and reading progress
+- `GET /v1/reading-progress` — Your reading progress across books
+- `GET /v1/reading-progress/{book_id}` — Your progress in one book
+- `PUT /v1/reading-progress/{book_id}` — Sync reading position
+- `GET /v1/bookmarks` · `POST /v1/bookmarks`
+- `PATCH /v1/bookmarks/{bookmark_id}` · `DELETE /v1/bookmarks/{bookmark_id}`
+- `GET /v1/wishlist` · `POST /v1/wishlist` · `DELETE /v1/wishlist/{book_id}`
+- `GET /v1/collections` · `POST /v1/collections`
+- `GET /v1/collections/{collection_id}` · `PATCH` · `DELETE`
+- `POST /v1/collections/{collection_id}/items`
+- `DELETE /v1/collections/{collection_id}/items/{book_id}`
+
+### Checkout and payments — `payment` service
+
+- `POST /v1/checkout/quote` — Price a cart without creating an order
+- `POST /v1/coupons/validate` — Check a coupon against a cart
+- `POST /v1/orders` — Create an order and open a checkout session
+- `GET /v1/orders` — Your order history
+- `GET /v1/orders/{order_id}` — One of your orders *(poll this)*
+- `POST /v1/orders/{order_id}/cancel` — Cancel an unpaid order
+- `GET /v1/payments/providers` — Which gateways this deployment can use
+- `POST /v1/payments/verify` — Confirm a payment from the browser
+- `GET /v1/invoices` · `GET /v1/invoices/{invoice_id}`
+
+### Subscriptions and affiliate — `payment` service
+
+- `GET /v1/plans` — Available subscription plans
+- `GET /v1/subscriptions` — Your subscriptions
+- `GET /v1/subscriptions/active` — Your current membership, if any
+- `POST /v1/subscriptions` — Start a subscription
+- `POST /v1/subscriptions/{subscription_id}/cancel` — Cancel a subscription
+- `POST /v1/affiliate` — Become an affiliate
+- `GET /v1/affiliate/me` — Your affiliate account
+- `GET /v1/affiliate/conversions` — Your referred sales
+
+### Notifications — `notifications` service
+
+- `GET /v1/notifications` — Your notifications *(cursor paginated)*
+- `GET /v1/notifications/unread-count` — Unread badge count
+- `POST /v1/notifications/read` — Mark notifications read
+- `POST /v1/notifications/{notification_id}/archive` — Dismiss a notification
+- `GET /v1/notifications/preferences` · `PUT /v1/notifications/preferences`
+- `GET /v1/notifications/channels` — Channels this deployment can use
+- `POST /v1/notifications/devices` · `DELETE /v1/notifications/devices/{device_id}`
+- `POST /v1/notifications/unsubscribe` — One-click unsubscribe *(public, token in body)*
+
+### AI assistant — `ai` service
+
+- `GET /v1/ai/status` — Whether AI features are usable right now
+- `POST /v1/ai/chat` — Ask the assistant
+- `GET /v1/ai/conversations` — Your conversations
+- `GET /v1/ai/conversations/{conversation_id}` — One conversation with its messages
+- `DELETE /v1/ai/conversations/{conversation_id}` — Delete a conversation
+- `POST /v1/ai/recommend` — Personalised recommendations
 
 ---
 
-## After Lovable is done
+## Flows worth getting exactly right
 
-Three things make the handover a config change instead of a rewrite. Check them
-before you accept the result:
+### Sign-in with 2FA
 
-1. **`grep -r "supabase" src/` returns nothing.** If Lovable enabled Supabase
-   anyway, tell it to remove it before you go further — it gets harder later.
-2. **`grep -rn "fetch(" src/components/` returns nothing.** All network calls belong
-   in `src/lib/api/`.
-3. **`VITE_USE_MOCK_API=false` is the only switch.** If flipping it requires code
-   changes, the adapters have drifted apart.
+```
+POST /v1/auth/login  { email, password, device_label? }
+  → 200 { access_token, token_type: "Bearer", expires_in,
+          csrf_token, user }                            ← no 2FA, done
+  → 200 { mfa_required: true, challenge_token,
+          expires_in, methods: ["totp","recovery_code"] } ← show the code modal
 
-### Then, to integrate
+POST /v1/auth/login/mfa  { challenge_token, code }
+  → 200 { access_token, expires_in, csrf_token, user }
+```
+
+`code` is a 6-digit TOTP **or** a recovery code — one field, the server tells them
+apart, and `methods` on the challenge says which are available. The challenge token is short-lived; on expiry, restart from `/login` rather than
+asking for another code.
+
+### Token refresh
+
+`POST /v1/auth/refresh` with `credentials: 'include'` and the `X-CSRF-Token` header.
+The value comes from either the readable `kos_csrf` cookie or the `csrf_token` field
+in the last auth response — they are the same value, so take whichever is easier.
+Omitting it on the cookie flow is a hard `csrf_missing` 401; it is only skipped for
+non-browser clients that send the refresh token in the body, where CSRF does not apply.
+
+The refresh token **rotates** on every use and reuse is treated as theft — a replayed
+old token revokes the whole family and signs the user out everywhere. That is why the
+concurrent-401 queue matters: two parallel refreshes race, the loser replays a consumed
+token, and the user is logged out for no reason. Single-flight it.
+
+### Checkout
+
+```
+POST /v1/checkout/quote   { items: [{book_id, quantity}], coupon_code? }
+  → { lines, subtotal_minor, discount_minor, taxable_minor,
+      tax: { percent, cgst_minor, sgst_minor, igst_minor, total_minor, place_of_supply },
+      total_minor, currency, coupon_applied, coupon_message }
+
+POST /v1/orders           { items, coupon_code?, provider? }   + Idempotency-Key
+  → { order, provider, provider_order_id, publishable_key,
+      checkout_url, client_secret }        ← flat, not a nested `checkout` object
+
+  ...redirect or open the gateway widget...
+
+POST /v1/payments/verify  { ...gateway payload... }            + Idempotency-Key
+GET  /v1/orders/{id}      ← poll until status is paid or failed
+```
+
+**The cart never sends prices.** `OrderItemIn` has no price field on purpose — the
+server prices everything, so a tampered client cannot buy a book for ₹1. Keep sending
+only ids and quantities, which the existing `localStorage` cart already does.
+
+Exactly one of `(cgst_minor + sgst_minor)` or `igst_minor` is non-zero: intra-state
+supply splits into CGST+SGST, inter-state is IGST. Render whichever is non-zero rather
+than showing three rows with a zero in them.
+
+A zero-total order (100% coupon, or a free book) skips the gateway and is paid
+instantly. The existing "0-amount instant" path is correct.
+
+### Reading
+
+`GET /v1/books/{book_id}/access` before opening the reader — it is the authoritative
+answer, and the download URL will refuse without it. `GET /v1/books/{book_id}/download`
+returns a **short-lived signed URL**; treat it as single-use and re-request rather than
+caching it, since the link itself is the capability.
+
+---
+
+## Not yet wired: what the backend gained after the frontend was built
+
+Four services landed after the mock layer was written. Three of them are invisible to
+customers — automation, workers, admin — but two things are worth picking up:
+
+**Feature flags.** The admin service now owns runtime feature flags with per-user
+percentage rollouts. There is no public read endpoint by design (flag evaluation is
+HMAC-only, service-to-service), so if the frontend needs them, the gateway would have
+to expose a thin read-through. Worth doing before the next `VITE_FEATURE_*` variable is
+added; not worth doing for one flag.
+
+**AI status.** `GET /v1/ai/status`, described above. This is the one change worth
+making now, because a build-time `VITE_FEATURE_AI` cannot know the daily budget ran out
+at 3pm.
+
+---
+
+## The integration itself
 
 ```bash
 # 1. Flip off the mocks — the URL is already correct
 VITE_USE_MOCK_API=false
 
 # 2. Allow the frontend origin on every service
-CORS_ORIGINS=https://<your-frontend-domain>
+CORS_ORIGINS=https://yourfrontend.app
 
-# 3. Allow the checkout return URL on the payment service
-ALLOWED_RETURN_ORIGINS=https://<your-frontend-domain>
+# 3. Allow the checkout return URL on the payment service.
+#    Origins, not hostnames — scheme included, no trailing slash.
+ALLOWED_RETURN_ORIGINS=https://yourfrontend.app
 ```
 
-Everything the frontend calls goes through the **gateway**, not the individual
-services. The gateway already routes `/v1/auth`, `/v1/books`, `/v1/search`,
-`/v1/orders`, `/v1/checkout`, `/v1/notifications` and the rest to the right place.
+Then, in order:
+
+1. **`GET /health` and `/docs`** — confirm the gateway is up and the OpenAPI matches
+   this page. If they disagree, `/docs` is right and this page is stale.
+2. **Auth first.** Register, log in, refresh, log out. Nothing else works until the
+   token lifecycle does, and the refresh-rotation behaviour is the most likely place
+   for the mock and the real client to diverge.
+3. **Catalogue and search.** Read-only, unauthenticated, and the cursor shape is
+   identical to the mock — this should be the easy one. Watch for the missing
+   catalogue `total`.
+4. **Library and reading.** Check the `session_seconds` delta first; it is silent when
+   wrong and only shows up as absurd reading times a week later.
+5. **Checkout last**, against a test gateway. It is the only flow where a wrong
+   assumption costs money rather than a re-render.
 
 ### One tradeoff worth knowing
 
-Lovable builds a **Vite SPA**, not Next.js. For an e-book store that means **book
-pages are not server-rendered**, so Google sees an empty shell on first crawl. For a
-storefront that lives on organic search for book titles, that is a real cost.
-
-Two ways to handle it, in order of effort:
-
-- **Accept it now, migrate later.** The API layer this prompt specifies ports to
-  Next.js almost unchanged — the components and the client are the same, only the
-  routing and data fetching move. This is the pragmatic path if you want something
-  live quickly.
-- **Prerender the important routes.** `vite-plugin-ssr` or a prerender step for
-  `/books/:slug` gets you most of the SEO benefit without leaving the Lovable stack.
-
-Either way, have Lovable set proper `<title>`, `<meta name="description">` and
-Open Graph tags per route with `react-helmet-async` — that alone covers link previews
-in WhatsApp, Slack and Twitter, which is where a lot of book sharing actually happens.
+The access token lives in memory, so a hard refresh logs the user out until the silent
+refresh completes — a brief flash of the signed-out state on first paint. That is the
+correct trade: a token in `localStorage` is readable by any XSS on the page, and this
+one is not. Render a loading state on boot rather than the signed-out shell, and the
+flash disappears.

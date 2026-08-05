@@ -303,13 +303,14 @@ Boundaries these tables live behind — see [ADR 0002](adr/0002-database-topolog
 
 | Schema | Tables |
 |---|---|
-| `auth` | users, sessions, refresh_tokens, oauth_accounts, signing_keys, audit_logs |
-| `books` | books, authors, categories, publishers, reviews, bookmarks, reading_progress, entitlements, book_versions |
-| `payment` | orders, order_items, payments, refunds, coupons, subscriptions, invoices |
-| `automation` | automation_jobs, job_stages, imports, processed_events |
-| `notifications` | notifications, notification_templates, deliveries, notification_preferences, suppressions, devices, processed_events |
+| `auth` | audit_logs, email_verification_tokens, oauth_accounts, password_reset_tokens, recovery_codes, refresh_tokens, sessions, signing_keys, totp_secrets, users |
+| `books` | authors, book_authors, book_categories, book_versions, bookmarks, books, categories, collection_items, collections, entitlements, processed_events, publishers, reading_progress, review_votes, reviews, wishlist |
+| `payment` | affiliate_accounts, affiliate_conversions, coupon_redemptions, coupons, invoices, order_items, orders, payments, refunds, subscription_plans, subscriptions, webhook_events |
+| `search` | indexed_documents, reindex_runs, search_clicks, search_queries |
+| `notifications` | deliveries, device_tokens, notification_preferences, notifications, processed_events, suppressions, templates |
+| `ai` | cached_results, conversations, cost_budgets, generations, messages, processed_events, prompt_templates |
+| `automation` | automation_jobs, imports, job_stages, processed_events |
 | `workers` | task_runs |
-| `ai` | generations, conversations, messages, cached_results, cost_budgets, prompt_templates, processed_events |
 | `admin` | feature_flags, flag_audits |
 
 Three conventions applied throughout:

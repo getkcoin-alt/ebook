@@ -331,6 +331,12 @@ Being precise about this matters more than a green checkmark.
   SQLite and `fakeredis` by design, so migrations are verified against SQLite rather
   than PostgreSQL. Run `alembic upgrade head` against a real Postgres before
   trusting production.
+
+  What that leaves unproven, specifically: `JSONB` columns (which degrade to `JSON`
+  on SQLite), the partial unique index on `automation_jobs` — the predicate is in the
+  migration, but only Postgres enforces it — and every `CHECK` constraint, which
+  SQLite parses but does not always apply the same way. The schema *shape* is
+  verified; its Postgres-specific enforcement is not.
 - **The frontend has never been installed or built** (`pnpm install` has not run).
 - **No end-to-end run** with several services talking to each other.
 

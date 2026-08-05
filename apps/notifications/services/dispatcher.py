@@ -134,6 +134,11 @@ class Dispatcher:
         variables = dict(request.variables)
         variables.setdefault("support_email", self._settings.support_email)
         variables.setdefault("from_name", self._settings.from_name)
+        # Every account email has to link back into the app, and none of the events
+        # carry a base URL — they carry a bare `reset_token` or `verification_token`.
+        # Without this each template has to hardcode the domain, so moving the
+        # frontend means editing every row instead of one variable.
+        variables.setdefault("frontend_url", str(self._settings.frontend_url).rstrip("/"))
 
         unsubscribe_url = (
             f"{self._settings.unsubscribe_url.rstrip('/')}"

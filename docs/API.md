@@ -350,7 +350,17 @@ All require authentication.
 | `POST` | `/v1/collections/{collection_id}/items` ✱ | Add a book |
 | `DELETE` | `/v1/collections/{collection_id}/items/{book_id}` ✱ | Remove a book |
 
-**Downloads are gated on an entitlement row, checked before the URL is minted.**
+`GET /v1/books/{book_id}/access` is the question a Read button should ask:
+
+```json
+{"book_id": "75bd6bf0-4ab3-443b-bafb-d38eb6ab77e4",
+ "has_access": false, "can_download": false, "source": null, "expires_at": null}
+```
+
+The field is **`has_access`**, not `can_read`. `source` is `purchase`,
+`subscription` or `free` once access exists.
+
+**Downloads are gated on that entitlement, checked before the URL is minted.**
 Without one:
 
 ```
@@ -360,16 +370,24 @@ Without one:
 With one, you get a short-lived signed URL:
 
 ```json
-{"url": "http://…/knowledgeos/private/book/…?X-Amz-Signature=…",
- "filename": "the-smoke-test-handbook.epub",
- "expires_in": 900}
+{"book_id": "75bd6bf0-…", "format": "epub",
+ "url": "https://srv1628639.hstgr.cloud:9000/knowledgeos/private/book/…?X-Amz-Signature=…",
+ "filename": "flow-book-bd95c678.epub",
+ "expires_in": 900, "expires_at": "2026-08-06T03:14:22Z"}
 ```
 
-The URL is single-purpose and expires in 15 minutes. Do not cache or share it.
+The URL is single-purpose and expires in 15 minutes. Do not cache or share it. The
+file never passes through the API — proxying a 40 MB PDF would occupy a worker for
+the whole transfer.
 
-A subscription grants a **read-only** entitlement: `access` reports `can_read: true`
-and `can_download: false`, and `/download` is a `403`. Reading progress requires an
-entitlement too — `PUT /v1/reading-progress/{book_id}` on an unowned book is a `402`.
+`?format=` is **optional**. Omit it and the book's preferred available format is
+served (PDF, then EPUB, then MOBI). Name one the book does not have and you get a
+`404` whose `details.available` lists what it does have.
+
+A subscription grants a **read-only** entitlement: `access` reports
+`has_access: true` with `can_download: false`, and `/download` is a `403`. Reading
+progress requires an entitlement too — `PUT /v1/reading-progress/{book_id}` on an
+unowned book is a `402`.
 
 ### Reviews
 
@@ -385,7 +403,9 @@ entitlement too — `PUT /v1/reading-progress/{book_id}` on an unowned book is a
 ### Payments
 
 > **Razorpay and Stripe credentials are not set on this deployment.**
-> `GET /v1/payments/providers` returns an empty list. Order creation, pricing, GST,
+> `GET /v1/payments/providers` returns
+> `{"providers": [], "default": null, "currency": "INR", "razorpay_key_id": null,
+> "stripe_publishable_key": null}`. Order creation, pricing, GST,
 > coupons, invoicing, refunds and entitlement granting all work; what is missing is
 > the hosted card page. Settle an order with
 > `POST /v1/admin/orders/{order_id}/mark-paid` (provider `manual`) and every
@@ -419,18 +439,46 @@ same way the order will be:
 
 ```http
 POST /v1/checkout/quote
-{"items": [{"book_id": "…", "quantity": 1}], "currency": "INR", "coupon_code": "LAUNCH20"}
+{"items": [{"book_id": "…", "quantity": 1}], "currency": "INR"}
 ```
 
 ```json
-{"subtotal_minor": 49900, "discount_minor": 9980, "tax_minor": 7186,
- "total_minor": 47106, "currency": "INR",
- "tax_breakdown": {"cgst_minor": 3593, "sgst_minor": 3593, "igst_minor": 0, "tax_percent": 18}}
+{"lines": [{"book_id": "75bd6bf0-4ab3-443b-bafb-d38eb6ab77e4",
+            "title": "The Smoke Test Handbook", "slug": "flow-book-bd95c678",
+            "quantity": 1, "unit_price_minor": 49900, "line_total_minor": 49900,
+            "already_owned": false}],
+ "subtotal_minor": 49900, "discount_minor": 0, "taxable_minor": 42288,
+ "tax": {"percent": 18, "cgst_minor": 3806, "sgst_minor": 3806,
+         "igst_minor": 0, "total_minor": 7612, "place_of_supply": "GJ"},
+ "total_minor": 49900, "currency": "INR",
+ "coupon_code": null, "coupon_applied": false, "coupon_message": null}
 ```
+
+**Listed prices are GST-inclusive.** Note that `total_minor` equals
+`subtotal_minor`: ₹499.00 is what the customer pays, of which ₹76.12 is tax and
+₹422.88 is the taxable value. Do not add `tax.total_minor` to `total_minor` — that
+would charge the tax twice. Show `total_minor` as the price and the `tax` object as
+a breakdown.
+
+`already_owned` is per line and worth surfacing: it is how you stop someone buying a
+book they have already paid for.
 
 **GST is integer arithmetic throughout**: CGST+SGST within a state, IGST across
 states, zero-rated for export, rounded once on the order total. Invoice numbers are
 a consecutive serial within the Indian financial year, as the law requires.
+
+Order creation returns a **`CheckoutSession` wrapping the order**, not the order
+itself — the browser needs the provider handoff alongside it:
+
+```json
+{"order": {"id": "…", "status": "awaiting_payment", "total_minor": 49900, …},
+ "provider": "manual", "provider_order_id": null, "publishable_key": null,
+ "checkout_url": null, "client_secret": null,
+ "amount_minor": 49900, "currency": "INR", "expires_at": "…"}
+```
+
+Read the order id from `response.order.id`. With no gateway configured,
+`checkout_url` and `client_secret` are `null` and `provider` is `manual`.
 
 **Confirmations arrive more than once, and that is fine.** Settlement is idempotent
 through a unique `(provider, provider_payment_id)`, a `mark_paid()` that returns
@@ -670,7 +718,8 @@ Idempotency-Key: <uuid>
 {"items": [{"book_id": "…", "quantity": 1}], "currency": "INR",
  "provider": "manual", "billing_email": "…", "billing_name": "…"}
 ```
-→ `201`, status `pending`, with GST computed server-side.
+→ `201`, a `CheckoutSession` whose `order.status` is `awaiting_payment`, with GST
+computed server-side. The order id is `response.order.id`.
 
 With a live gateway the client would complete payment and the provider webhook would
 settle it. Here an operator does:
@@ -685,16 +734,18 @@ service consumes it and writes an entitlement. Poll:
 ```http
 GET /v1/books/{book_id}/access
 ```
-→ `{"can_read": true, "can_download": true, "source": "purchase"}` within a second
-or two.
+→ `{"has_access": true, "can_download": true, "source": "purchase"}` — observed at
+**2 seconds** after settlement on this deployment.
 
 **6. Download works.**
 
 ```http
 GET /v1/books/{book_id}/download
 ```
-→ `200 {"url": "…", "filename": "…", "expires_in": 900}`. Fetching that URL returns
-the exact bytes uploaded in step 1.
+→ `200 {"format": "epub", "url": "…", "filename": "…", "expires_in": 900}`. No
+`?format=` was sent and the book has only an EPUB, so an EPUB is what it serves.
+Fetching that URL returns the **exact bytes uploaded in step 1** — verified
+byte-for-byte.
 
 The book is now in `GET /v1/library`, reading progress can be synced, and a GST
 invoice is available at `GET /v1/invoices`.

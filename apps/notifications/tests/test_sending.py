@@ -159,6 +159,37 @@ async def test_every_message_carries_a_signed_unsubscribe_url(
     assert verify_unsubscribe_token(UNSUBSCRIBE_SECRET, token) == READER_ID
 
 
+async def test_account_links_can_be_built_without_hardcoding_the_domain(
+    session, services, template_factory, email_provider
+):
+    """`frontend_url` is supplied to every template.
+
+    The events that need a link carry only a bare token — `reset_token`,
+    `verification_token` — and never a base URL. Without this variable every
+    template has to hardcode the domain, and moving the frontend means editing
+    every row rather than one setting.
+    """
+    await template_factory(
+        key="account.password_reset",
+        channel=NotificationChannel.EMAIL,
+        category="account.password_reset",
+        subject="Reset your password",
+        body_text="Open {{frontend_url}}/reset-password?token={{reset_token}} to continue.",
+        required_variables=["reset_token"],
+    )
+    await services["dispatcher"].send(
+        session,
+        _request(
+            template_key="account.password_reset",
+            variables={"reset_token": "tok-123"},
+            channels=[NotificationChannel.EMAIL],
+        ),
+    )
+    body = email_provider.sent[0].body_text
+    assert "{{frontend_url}}" not in body
+    assert "/reset-password?token=tok-123" in body
+
+
 # ---------------------------------------------------------------------------
 # Preferences and suppression
 # ---------------------------------------------------------------------------

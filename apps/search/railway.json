@@ -5,9 +5,10 @@
     "dockerfilePath": "apps/search/Dockerfile"
   },
   "deploy": {
-    "startCommand": "sh -c 'alembic upgrade head && python -m main'",
+    "preDeployCommand": "alembic upgrade head",
+    "startCommand": "python -m main",
     "healthcheckPath": "/health",
-    "healthcheckTimeout": 30,
+    "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10,
     "numReplicas": 2,

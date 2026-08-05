@@ -70,6 +70,29 @@ REDIS_URL=${{Redis.REDIS_URL}}
 Railway hands out `postgres://…`; the platform rewrites the scheme to
 `postgresql+asyncpg://` automatically, so paste it unchanged.
 
+### ⚠️ Attach a volume to Postgres before anything else
+
+Railway's `postgres-ssl` image **refuses to start without a volume** mounted at
+exactly `/var/lib/postgresql/data`. Attach one in the dashboard (⌘K → *Create
+Volume*, or right-click the canvas) and confirm the mount path.
+
+Get this wrong and the failure is silent and badly misleading:
+
+- Postgres logs `Railway volume not mounted to the correct path, expected
+  /var/lib/postgresql/data but got ` in a loop and never listens on 5432 — but the
+  Railway dashboard still shows the service **Online** with a **SUCCESS**
+  deployment, because the container is running. It just is not a database.
+- Every other service then fails its healthcheck with **no application logs at
+  all**. Their migrations block on a TCP connect that nobody is going to answer,
+  and `psycopg` waits several minutes before raising `ConnectionTimeout` — long
+  after the healthcheck window has closed and the deploy has been marked failed.
+  The logs look like the service never started. It started fine; it is waiting.
+
+So: a service that fails its healthcheck while printing nothing is almost always
+waiting on something, and the first thing to check is that Postgres is genuinely
+accepting connections — not merely green. Its log should say
+`database system is ready to accept connections`.
+
 Locally, `pnpm stack:up` provides both with the defaults already in `.env.example`.
 
 ---

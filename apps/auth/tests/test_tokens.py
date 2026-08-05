@@ -6,6 +6,7 @@ a stolen refresh token from being a silent 30-day credential.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -224,3 +225,98 @@ class TestMfaChallenge:
     async def test_garbage_challenge_rejected(self, services):
         with pytest.raises(UnauthorizedError):
             services["tokens"].read_mfa_challenge("not.a.token")
+
+
+async def _stale_token(session, user, *, token_hash: str, age_days: int, expiry_days: int):
+    """A refresh token belonging to a real user and a real session.
+
+    Both foreign keys are enforced, so a token invented with random UUIDs never
+    reaches the table the sweep is meant to clean.
+    """
+    from models import RefreshToken, Session
+
+    now = datetime.now(UTC)
+    row = Session(
+        user_id=user.id,
+        ip_address="127.0.0.1",
+        user_agent="pytest",
+        expires_at=now - timedelta(days=expiry_days),
+        created_at=now - timedelta(days=age_days),
+    )
+    session.add(row)
+    await session.flush()
+
+    token = RefreshToken(
+        user_id=user.id,
+        session_id=row.id,
+        family_id=uuid.uuid4(),
+        token_hash=token_hash,
+        csrf_hash=token_hash,
+        expires_at=now - timedelta(days=expiry_days),
+        created_at=now - timedelta(days=age_days),
+    )
+    session.add(token)
+    await session.commit()
+    return token
+
+
+class TestMaintenanceSweep:
+    """Nothing else deletes from these tables, and every one gains a row per login."""
+
+    async def test_an_expired_token_inside_the_grace_window_is_kept(self, session, settings, user):
+        """Deleting a token the instant it expires destroys reuse detection.
+
+        A stolen token replayed a minute after expiry must be recognised as a revoked
+        family, not met with "unknown token" — which is indistinguishable from a typo
+        and tells an attacker nothing has been noticed.
+        """
+        from services import MaintenanceService
+
+        await _stale_token(session, user, token_hash="a" * 64, age_days=2, expiry_days=1)
+
+        assert (await MaintenanceService(settings).prune(session)).refresh_tokens == 0
+
+    async def test_a_token_past_the_grace_window_is_dropped(self, session, settings, user):
+        from services import MaintenanceService
+
+        age = settings.token_retention_days + 10
+        await _stale_token(session, user, token_hash="b" * 64, age_days=age, expiry_days=age)
+
+        assert (await MaintenanceService(settings).prune(session)).refresh_tokens == 1
+
+    async def test_a_dry_run_reports_without_deleting(self, session, settings, user):
+        from sqlalchemy import func
+
+        from models import RefreshToken
+        from services import MaintenanceService
+
+        age = settings.token_retention_days + 10
+        await _stale_token(session, user, token_hash="c" * 64, age_days=age, expiry_days=age)
+
+        assert (await MaintenanceService(settings).prune(session, dry_run=True)).refresh_tokens == 1
+
+        remaining = (
+            await session.execute(select(func.count()).select_from(RefreshToken))
+        ).scalar_one()
+        assert remaining == 1
+
+    async def test_security_relevant_audit_entries_survive_retention(self, session, settings):
+        """ "We deleted it after 90 days" is not an answer anyone accepts after a breach."""
+        from models import AuditLog
+        from services import MaintenanceService
+
+        old = datetime.now(UTC) - timedelta(days=settings.audit_retention_days + 30)
+        session.add(AuditLog(action="user.banned", created_at=old))
+        session.add(AuditLog(action="user.logged_in", created_at=old))
+        await session.commit()
+
+        assert (await MaintenanceService(settings).prune(session)).audit_logs == 1
+
+    async def test_a_recent_audit_entry_is_untouched(self, session, settings):
+        from models import AuditLog
+        from services import MaintenanceService
+
+        session.add(AuditLog(action="user.logged_in"))
+        await session.commit()
+
+        assert (await MaintenanceService(settings).prune(session)).audit_logs == 0

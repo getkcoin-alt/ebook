@@ -11,7 +11,7 @@ Last updated: 2026-08-05
 | | Status |
 |---|---|
 | Foundation (`packages/core-py`) | ✅ Complete · 63 tests |
-| Auth service | ✅ Complete · 76 tests |
+| Auth service | ✅ Complete · 81 tests |
 | API gateway | ✅ Complete · 39 tests |
 | Book service | ✅ Complete · 48 tests · 66 endpoints |
 | Payment service | ✅ Complete · 156 tests · 42 endpoints |
@@ -19,11 +19,12 @@ Last updated: 2026-08-05
 | Notification service | ✅ Complete · 69 tests · 28 endpoints |
 | AI service | ✅ Complete · 48 tests · 12 endpoints |
 | Automation service | ✅ Complete · 130 tests · 17 endpoints |
-| Workers · Admin | ⬜ Not started |
+| Workers service | ✅ Complete · 46 tests · 7 endpoints |
+| Admin service | ⬜ Not started |
 | Frontend | 🟡 `types` + `config` packages only |
 | Infrastructure, CI, docs | ✅ Complete |
 
-**725 tests passing.** Ruff clean across everything committed.
+**776 tests passing.** Ruff clean across everything committed.
 
 Three numbers above correct earlier revisions of this page. The gateway and payment
 test counts said 42 and 154; the real figures are 39 and 156. The book service's
@@ -215,10 +216,39 @@ a genuine small archive declaring a huge expansion.
 
 Migration verified: upgrade, `alembic check` (no drift), downgrade.
 
+## ✅ Workers service — `apps/workers`
+
+46 tests. The platform scheduler: thirteen jobs across seven services, driven by
+Celery beat.
+
+**It calls HTTP, never a table.** Every schedule entry names a service and one of its
+`/internal/maintenance/*` routes. A scheduler with direct database access to every
+schema is how a microservice platform quietly re-couples — the sweep that expires
+orders would end up encoding the payment service's state machine, and the constraint
+that makes schema-per-service worth anything (ADR 0002) would be broken by the one
+process nobody thinks of as a service.
+
+Runs are single-flight through a Redis lock, because beat fires on every replica.
+Losing that lock is recorded as its own outcome and does not count as a failure — a
+three-replica deployment must not look like it is failing two runs in three. So is a
+timeout, which very likely means the sweep completed and we stopped waiting.
+
+The run-history table answers the question logs are worst at: **has beat stopped
+firing?** A job that is not running produces no logs and no failures, so it is
+invisible in every signal except the absence of recent runs.
+
+This work also added the auth service's first cleanup sweep. Its token, session and
+audit tables gained a row per login and nothing ever deleted from them. Expired refresh
+tokens are kept through a grace window rather than dropped at expiry — deleting one the
+instant it expires destroys the evidence reuse detection depends on — and
+security-relevant audit actions are exempt from retention entirely.
+
+Migration verified: upgrade, `alembic check` (no drift), downgrade.
+
 ## ⬜ Not yet started
 
-Workers, admin, and the frontend application. Their directories exist; `apps/frontend`
-is empty apart from the shared `types` and `config` packages.
+The admin service and the frontend application. Their directories exist;
+`apps/frontend` is empty apart from the shared `types` and `config` packages.
 
 ---
 
@@ -227,7 +257,7 @@ is empty apart from the shared `types` and `config` packages.
 Being precise about this matters more than a green checkmark.
 
 **Verified — actually executed:**
-- All 725 tests, on every commit
+- All 776 tests, on every commit
 - `ruff check` and `ruff format --check`
 - Every service's migrations — auth, books, payment, search, notifications, ai,
   automation: upgrade, `alembic check` (no drift), downgrade

@@ -316,3 +316,20 @@ class JWK(BaseSchema):
 
 class JWKS(BaseSchema):
     keys: list[JWK]
+
+
+class PruneResponse(BaseSchema):
+    """What the cleanup sweep removed.
+
+    Reported per table rather than as one total, because the interesting signal is
+    which table is growing — a refresh-token count an order of magnitude above the
+    session count means rotation is running away somewhere.
+    """
+
+    refresh_tokens: int = 0
+    sessions: int = 0
+    verification_tokens: int = 0
+    reset_tokens: int = 0
+    audit_logs: int = 0
+    total: int = 0
+    dry_run: bool = False

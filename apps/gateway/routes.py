@@ -225,6 +225,9 @@ ROUTES: tuple[Route, ...] = (
     Route("/v1/admin/search", "search", require_auth=True, timeout=300),
     Route("/v1/admin/notifications", "notification", require_auth=True, timeout=60),
     Route("/v1/admin/automation", "automation", require_auth=True, timeout=60),
+    # Triggering a sweep by hand runs it inline and waits for the owning service,
+    # and the schedule's own budgets go up to fifteen minutes.
+    Route("/v1/admin/workers", "workers", require_auth=True, timeout=900),
 )
 
 

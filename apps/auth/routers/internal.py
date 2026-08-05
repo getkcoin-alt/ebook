@@ -10,15 +10,21 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import select
 
 from deps import DbSession, accounts_service, key_ring, token_service
 from knowledgeos_core import ListResponse, MessageResponse, NotFoundError
 from knowledgeos_core.deps import Ctx, InternalCaller
 from models import User
-from schemas import JWKS, BanUserRequest, InternalUserBatchRequest, InternalUserOut
-from services import AccountService, KeyRing, TokenService
+from schemas import (
+    JWKS,
+    BanUserRequest,
+    InternalUserBatchRequest,
+    InternalUserOut,
+    PruneResponse,
+)
+from services import AccountService, KeyRing, MaintenanceService, TokenService
 from settings import settings
 
 router = APIRouter(tags=["internal"])
@@ -26,6 +32,7 @@ router = APIRouter(tags=["internal"])
 Keys = Annotated[KeyRing, Depends(key_ring)]
 Accounts = Annotated[AccountService, Depends(accounts_service)]
 Tokens = Annotated[TokenService, Depends(token_service)]
+Maintenance = Annotated[MaintenanceService, Depends(lambda: MaintenanceService(settings))]
 
 
 def _to_internal(user: User) -> InternalUserOut:
@@ -177,3 +184,38 @@ async def internal_unban_user(
     if ctx.redis is not None:
         await ctx.redis.client.delete(f"kos:denylist:user:{user_id}")
     return MessageResponse(message="Ban lifted.")
+
+
+@router.post(
+    "/internal/maintenance/prune",
+    response_model=PruneResponse,
+    summary="Drop expired tokens, sessions and old audit rows (internal)",
+    description=(
+        "Driven by the worker on a schedule. Nothing else deletes from these tables, "
+        "and every one of them gains a row per login — left alone, the tables every "
+        "login path reads become the slowest thing in this service.\n\n"
+        "A refresh token is dropped only once it is past its expiry **and** past a "
+        "grace window. Deleting one the instant it expires destroys the evidence that "
+        "makes reuse detection work: a stolen token replayed a minute later should be "
+        'recognised as a revoked family, not met with "unknown token" — which is '
+        "indistinguishable from a typo and tells an attacker nothing was noticed.\n\n"
+        "Audit logs have their own, far longer retention, and security-relevant "
+        "actions are exempt from it entirely. Pass `dry_run` to see what would go."
+    ),
+)
+async def internal_prune(
+    caller: InternalCaller,
+    session: DbSession,
+    maintenance: Maintenance,
+    dry_run: Annotated[bool, Query(description="Report without deleting.")] = False,
+) -> PruneResponse:
+    result = await maintenance.prune(session, dry_run=dry_run)
+    return PruneResponse(
+        refresh_tokens=result.refresh_tokens,
+        sessions=result.sessions,
+        verification_tokens=result.verification_tokens,
+        reset_tokens=result.reset_tokens,
+        audit_logs=result.audit_logs,
+        total=result.total,
+        dry_run=dry_run,
+    )

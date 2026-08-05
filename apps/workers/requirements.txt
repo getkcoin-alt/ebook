@@ -1,0 +1,11 @@
+# Workers service dependencies.
+# knowledgeos-core provides FastAPI, SQLAlchemy, Redis, httpx, structlog and uvicorn.
+
+# Alembic migrations run through a blocking driver.
+psycopg[binary]>=3.2.3
+
+# Celery beat drives the schedule; the worker executes it. Named directly rather
+# than through core-py's `[tasks]` extra: the image installs core-py from a path,
+# and re-declaring it here as a requirement would make pip resolve it twice.
+celery[redis]>=5.4.0
+kombu>=5.4.2

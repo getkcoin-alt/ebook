@@ -157,6 +157,29 @@ class ServiceClient:
     async def _send(self, request: httpx.Request) -> httpx.Response:
         return await self._client.send(request)
 
+    async def _send_with_timeout(
+        self,
+        request: httpx.Request,
+        # An HTTP read budget handed to httpx, not an asyncio deadline.
+        timeout: float,  # noqa: ASYNC109
+    ) -> httpx.Response:
+        """One attempt, with a caller-supplied budget and **no retry**.
+
+        The client's default budget is sized for ordinary calls; a scheduled reconcile
+        or a pipeline drain legitimately runs for minutes, and raising the client-wide
+        default to accommodate them would let every ordinary call hang just as long.
+
+        Retrying is deliberately skipped on this path. Three attempts at a fifteen-
+        second call is a blip; three attempts at a fifteen-*minute* one occupies a
+        worker for the better part of an hour, and the caller that chose a long budget
+        is exactly the caller that knows one attempt is enough.
+        """
+        request.extensions = {
+            **request.extensions,
+            "timeout": httpx.Timeout(timeout, connect=5.0).as_dict(),
+        }
+        return await self._client.send(request)
+
     async def request(
         self,
         method: str,
@@ -166,6 +189,9 @@ class ServiceClient:
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         content: bytes | None = None,
+        # An HTTP read budget handed to httpx, not an asyncio deadline; `asyncio.timeout`
+        # would cancel mid-request and lose the response the server did send.
+        timeout: float | None = None,  # noqa: ASYNC109
     ) -> httpx.Response:
         self._breaker.before_request()
 
@@ -191,7 +217,22 @@ class ServiceClient:
 
         started = time.perf_counter()
         try:
-            response = await self._send(request)
+            response = await (
+                self._send(request)
+                if timeout is None
+                else self._send_with_timeout(request, timeout)
+            )
+        except httpx.TimeoutException:
+            self._breaker.on_failure()
+            upstream_requests_total.labels(
+                service=self._service, upstream=self._name, status="timeout"
+            ).inc()
+            logger.warning("upstream.request_timed_out", upstream=self._name, path=path)
+            # Re-raised as itself, not wrapped. A timeout is not the same fact as
+            # "could not reach": the request very likely arrived and the work very
+            # likely happened, so a caller deciding whether to retry needs to be able
+            # to tell the two apart.
+            raise
         except httpx.HTTPError as exc:
             self._breaker.on_failure()
             upstream_requests_total.labels(

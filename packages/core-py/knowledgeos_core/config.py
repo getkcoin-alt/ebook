@@ -159,6 +159,7 @@ class ServiceSettings(BaseSettings):
     notification_service_url: str = "http://localhost:8006"
     automation_service_url: str = "http://localhost:8007"
     admin_service_url: str = "http://localhost:8008"
+    workers_service_url: str = "http://localhost:8009"
 
     frontend_url: AnyHttpUrl | str = "http://localhost:3000"
 

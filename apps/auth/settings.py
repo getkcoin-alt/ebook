@@ -58,6 +58,17 @@ class Settings(ServiceSettings):
     password_reset_ttl: int = 3_600
     oauth_state_ttl: int = 600
 
+    # ---- retention -------------------------------------------------------
+    #: How long an expired or revoked refresh token is kept before the sweep drops
+    #: it. Longer than the token's own lifetime on purpose: a stolen token replayed
+    #: after expiry must be recognised as a revoked family rather than met with
+    #: "unknown token", which is indistinguishable from a typo and tells an attacker
+    #: that nothing has been noticed.
+    token_retention_days: int = 45
+    #: Audit logs answer questions that arrive months late, so they get their own,
+    #: much longer window — and the security-relevant actions are exempt entirely.
+    audit_retention_days: int = 365
+
     # ---- credentials policy ---------------------------------------------
     password_min_length: int = 12
     password_max_length: int = 128

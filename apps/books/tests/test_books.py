@@ -323,6 +323,28 @@ class TestOwnership:
     async def test_wishlist_requires_authentication(self, client):
         assert (await client.get("/v1/wishlist")).status_code == 401
 
+    async def test_wishlist_round_trip(self, client, book_factory, as_user):
+        # The POST route was a 500 in production: it called the service with
+        # `book_id=` where the service takes `payload=`, and nothing exercised it —
+        # only the 401 above, which never reaches the handler.
+        book = await book_factory(title="Wishlisted")
+        as_user()
+
+        added = await client.post(
+            "/v1/wishlist", json={"book_id": str(book.id), "note": "read this next"}
+        )
+        assert added.status_code == 201, added.text
+
+        listed = await client.get("/v1/wishlist")
+        assert listed.status_code == 200, listed.text
+        items = listed.json()["items"]
+        assert [i["book"]["title"] for i in items] == ["Wishlisted"]
+        # The note travelled with the payload rather than being dropped on the way.
+        assert items[0]["note"] == "read this next"
+
+        assert (await client.delete(f"/v1/wishlist/{book.id}")).status_code == 204
+        assert (await client.get("/v1/wishlist")).json()["items"] == []
+
     async def test_progress_requires_entitlement(self, client, book_factory, as_user):
         book = await book_factory()
         as_user()

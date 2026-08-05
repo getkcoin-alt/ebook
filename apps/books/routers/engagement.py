@@ -368,8 +368,18 @@ async def list_wishlist(
     rows, _cursor, _more = await lists.list_wishlist(
         session, user_id=user_uuid(user), cursor=cursor, limit=limit
     )
+    # `user_id`, `book_id` and `note` are all required or meaningful on the schema
+    # and were previously omitted, so serialising a single row raised a validation
+    # error. An empty wishlist never entered this comprehension, which is why the
+    # route looked healthy right up until somebody added something to it.
     items = [
-        WishlistItemOut(book=BookListItem.model_validate(book), created_at=entry.created_at)
+        WishlistItemOut(
+            user_id=entry.user_id,
+            book_id=entry.book_id,
+            note=entry.note,
+            created_at=entry.created_at,
+            book=BookListItem.model_validate(book),
+        )
         for entry, book in rows
     ]
     return ListResponse[WishlistItemOut](items=items, total=len(items))
@@ -387,7 +397,7 @@ async def add_to_wishlist(
     lists: Lists,
     user: CurrentUser,
 ) -> MessageResponse:
-    await lists.add_to_wishlist(session, user_id=user_uuid(user), book_id=payload.book_id)
+    await lists.add_to_wishlist(session, user_id=user_uuid(user), payload=payload)
     return MessageResponse(message="Added to your wishlist.")
 
 

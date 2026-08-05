@@ -414,7 +414,11 @@ async def admin_list_invoices(
     session: DbSession,
     invoices: Invoices,
     page: PageOffset,
-    user_id: Annotated[uuid.UUID, Query()] = ...,  # type: ignore[assignment]
+    # No `= ...` default. With `Annotated`, a required parameter is one with no
+    # default at all; writing `= ...` makes Ellipsis the actual default value, and
+    # FastAPI then tries to validate the literal `...` as a UUID. Every call was a
+    # 500 before it reached this function.
+    user_id: Annotated[uuid.UUID, Query()],
 ) -> ListResponse[InvoiceOut]:
     limit, offset = page
     rows, total = await invoices.list_for_user(session, user_id=user_id, limit=limit, offset=offset)

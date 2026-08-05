@@ -463,6 +463,35 @@ async def test_an_admin_can_settle_an_offline_payment(client, as_admin, order_fa
     assert order.provider is not None
 
 
+async def test_an_admin_can_list_invoices_for_a_customer(client, as_admin, order_factory, session):
+    """The route was a 500 on every call, and nothing exercised it.
+
+    `user_id` was declared `Annotated[uuid.UUID, Query()] = ...`, which makes
+    Ellipsis the default rather than marking the parameter required, so FastAPI
+    validated the literal `...` as a UUID before the handler ever ran.
+    """
+    order = await order_factory()
+    as_admin()
+    # Settling the order is what issues the invoice.
+    assert (await client.post(f"/v1/admin/orders/{order.id}/mark-paid")).status_code == 200
+
+    response = await client.get("/v1/admin/invoices", params={"user_id": str(READER_ID)})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total"] >= 1
+    invoice = body["items"][0]
+    assert invoice["order_id"] == str(order.id)
+    # A serial within the Indian financial year, as the law requires.
+    assert "/" in invoice["invoice_number"]
+
+
+async def test_admin_invoices_requires_a_user_id(client, as_admin):
+    # Required, not optional-with-a-broken-default: omitting it is a 422 from
+    # validation, not a listing of every customer's invoices.
+    as_admin()
+    assert (await client.get("/v1/admin/invoices")).status_code == 422
+
+
 async def test_an_admin_can_create_and_deactivate_a_coupon(client, as_admin):
     as_admin()
     created = await client.post(

@@ -114,16 +114,19 @@ jobs:
             [ -f "$req" ] && pip install -r "$req"
           done
       - name: Run tests with coverage
-        run: |
-          pytest --cov --cov-report=xml --cov-report=term-missing \
-                 --junitxml=junit.xml -o junit_family=legacy
+        # One pytest process per service. A single run from the repository root
+        # cannot work with this layout: every service defines top-level `models`,
+        # `schemas`, `settings` and `tests` modules, so two `tests/conftest.py`
+        # files under one rootdir fail collection outright — and if they did not,
+        # the first service to import `models` would win for all of them.
+        run: scripts/test-python.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: python-test-results
           path: |
-            junit.xml
-            coverage.xml
+            junit-*.xml
+            coverage-*.xml
           retention-days: 7
 
   python-typecheck:

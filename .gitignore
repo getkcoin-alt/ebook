@@ -90,3 +90,8 @@ logs/
 npm-debug.log*
 pnpm-debug.log*
 yarn-error.log*
+
+# Per-service test artefacts (scripts/test-python.sh)
+junit-*.xml
+coverage-*.xml
+.coverage.*

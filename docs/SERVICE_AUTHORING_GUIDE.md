@@ -40,13 +40,15 @@ apps/<service>/
 ```python
 from knowledgeos_core import ServiceSettings
 
+
 class Settings(ServiceSettings):
     service_name: str = "books"
-    database_schema: str = "books"   # THIS SERVICE'S SCHEMA — never another's
+    database_schema: str = "books"  # THIS SERVICE'S SCHEMA — never another's
     port: int = 8002
 
     # service-specific config goes here
     max_upload_bytes: int = 100 * 1024 * 1024
+
 
 settings = Settings()
 ```
@@ -62,13 +64,13 @@ from settings import settings
 app = create_app(
     settings=settings,
     components=Components(
-        database=True,       # Postgres session + readiness probe
-        redis=True,          # cache, rate limiter, idempotency store
-        storage=True,        # S3/MinIO
-        auth=True,           # verify inbound access tokens (needs JWKS_URL)
-        events=True,         # publish domain events
-        event_consumer="books",   # ALSO consume; the string is the group name
-        service_clients=True,     # call sibling services
+        database=True,  # Postgres session + readiness probe
+        redis=True,  # cache, rate limiter, idempotency store
+        storage=True,  # S3/MinIO
+        auth=True,  # verify inbound access tokens (needs JWKS_URL)
+        events=True,  # publish domain events
+        event_consumer="books",  # ALSO consume; the string is the group name
+        service_clients=True,  # call sibling services
     ),
     routers=[books_router, reviews_router],
     description="Catalogue, reviews, bookmarks and reading progress.",
@@ -106,15 +108,15 @@ automation). Keep the runtime stage non-root.
 
 ```python
 from knowledgeos_core import (
-    BadRequestError,      # 400
-    UnauthorizedError,    # 401
-    PaymentRequiredError, # 402
-    ForbiddenError,       # 403
-    NotFoundError,        # 404
-    ConflictError,        # 409
-    ValidationError,      # 422
-    RateLimitedError,     # 429
-    UpstreamError,        # 502
+    BadRequestError,  # 400
+    UnauthorizedError,  # 401
+    PaymentRequiredError,  # 402
+    ForbiddenError,  # 403
+    NotFoundError,  # 404
+    ConflictError,  # 409
+    ValidationError,  # 422
+    RateLimitedError,  # 429
+    UpstreamError,  # 502
     ServiceUnavailableError,  # 503
 )
 
@@ -130,27 +132,36 @@ Never put internal detail in `message` — it goes to the client. Put it in the 
 
 ```python
 from knowledgeos_core.deps import (
-    DbSession,       # AsyncSession, committed on success, rolled back on error
-    CurrentUser,     # Principal — 401 if no valid token
-    OptionalUser,    # Principal | None — anonymous allowed
-    AdminUser,       # Principal — 403 unless admin/superadmin
-    StaffUser,       # moderator/admin/superadmin
-    Storage, Redis, Limiter, Idempotency, Ctx,
+    DbSession,  # AsyncSession, committed on success, rolled back on error
+    CurrentUser,  # Principal — 401 if no valid token
+    OptionalUser,  # Principal | None — anonymous allowed
+    AdminUser,  # Principal — 403 unless admin/superadmin
+    StaffUser,  # moderator/admin/superadmin
+    Storage,
+    Redis,
+    Limiter,
+    Idempotency,
+    Ctx,
     InternalCaller,  # HMAC-verified service name, for /internal/* routes
-    require_permission, require_roles, require_self_or_permission,
+    require_permission,
+    require_roles,
+    require_self_or_permission,
     rate_limit,
 )
 
+
 @router.get("/books/{book_id}")
-async def get_book(book_id: UUID, session: DbSession, user: OptionalUser) -> BookOut:
-    ...
+async def get_book(book_id: UUID, session: DbSession, user: OptionalUser) -> BookOut: ...
+
 
 @router.delete(
     "/books/{book_id}",
-    dependencies=[Depends(require_permission("books:delete")), Depends(rate_limit("authenticated"))],
+    dependencies=[
+        Depends(require_permission("books:delete")),
+        Depends(rate_limit("authenticated")),
+    ],
 )
-async def delete_book(book_id: UUID, session: DbSession) -> MessageResponse:
-    ...
+async def delete_book(book_id: UUID, session: DbSession) -> MessageResponse: ...
 ```
 
 **Never call `session.commit()` in a handler.** The dependency commits on success and
@@ -161,11 +172,12 @@ rolls back on any exception, so a handler cannot leave a half-written aggregate.
 ```python
 from knowledgeos_core import Base, SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin
 
+
 class Book(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "books"
     __table_args__ = (
         Index("ix_books_status_published_at", "status", "published_at"),
-        {"schema": "books"},          # ALWAYS set the schema explicitly
+        {"schema": "books"},  # ALWAYS set the schema explicitly
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     price_minor: Mapped[int] = mapped_column(Integer, nullable=False)  # minor units!
@@ -183,6 +195,7 @@ Rules:
 ```python
 from knowledgeos_core import Page, PageParams, apply_sorting, page_params, paginate
 
+
 @router.get("/books")
 async def list_books(
     session: DbSession,
@@ -190,7 +203,9 @@ async def list_books(
     sort_by: str = "created_at",
 ) -> Page[BookOut]:
     stmt = select(Book).where(Book.deleted_at.is_(None))
-    stmt = apply_sorting(stmt, Book, sort_by=sort_by, allowed={"created_at", "title", "price_minor"})
+    stmt = apply_sorting(
+        stmt, Book, sort_by=sort_by, allowed={"created_at", "title", "price_minor"}
+    )
     rows, total = await paginate(session, stmt, params)
     return Page.create([BookOut.model_validate(r) for r in rows], total=total, params=params)
 ```
@@ -211,10 +226,10 @@ await ctx.require_publisher().publish(
     EventType.BOOK_PUBLISHED, {"book_id": str(book.id), "slug": book.slug}
 )
 
+
 # consume — register in a startup hook
 @ctx.consumer.on(EventType.PAYMENT_SUCCEEDED)
-async def grant_access(event: Event) -> None:
-    ...   # MUST be idempotent: delivery is at-least-once
+async def grant_access(event: Event) -> None: ...  # MUST be idempotent: delivery is at-least-once
 ```
 
 ### Storage
@@ -222,11 +237,14 @@ async def grant_access(event: Event) -> None:
 ```python
 storage = ctx.require_storage()
 
-target = await storage.create_upload_target(          # browser PUTs directly
-    category="book", owner_id=str(user.user_id),
-    filename="x.pdf", content_type="application/pdf", visibility="private",
+target = await storage.create_upload_target(  # browser PUTs directly
+    category="book",
+    owner_id=str(user.user_id),
+    filename="x.pdf",
+    content_type="application/pdf",
+    visibility="private",
 )
-url = await storage.signed_download_url(key, expires_in=300)   # AFTER entitlement check
+url = await storage.signed_download_url(key, expires_in=300)  # AFTER entitlement check
 ```
 
 **Never stream a file through FastAPI.** Presigned URLs only.
@@ -234,7 +252,7 @@ url = await storage.signed_download_url(key, expires_in=300)   # AFTER entitleme
 ### Calling another service
 
 ```python
-client = ctx.require_services().get("auth")     # name matches <name>_service_url
+client = ctx.require_services().get("auth")  # name matches <name>_service_url
 data = await client.get_json(f"/internal/users/{user_id}")
 ```
 
@@ -246,6 +264,7 @@ Expose your own cross-service endpoints under `/internal/*` guarded by
 
 ```python
 from knowledgeos_core import get_logger
+
 logger = get_logger(__name__)
 
 logger.info("book.published", book_id=str(book.id), price_minor=book.price_minor)

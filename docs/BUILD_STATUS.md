@@ -283,12 +283,38 @@ against the deployed API.
 
 ---
 
+## Running the tests
+
+`scripts/test-python.sh` — **one pytest process per service**, and it has to be.
+
+A single run from the repository root cannot collect this monorepo: every service is an
+independent deployable with its own directory on `PYTHONPATH`, so each defines top-level
+`models`, `schemas`, `settings` and `tests` modules. Two `tests/conftest.py` files under
+one rootdir fail collection outright, and if they did not, the first service to import
+`models` would win for every service collected after it.
+
+CI ran bare `pytest` from the root until this was noticed, which means it was collecting
+nothing and passing. Bare `pytest` from the root now prints an explanation and points at
+the script.
+
+```bash
+scripts/test-python.sh              # everything
+scripts/test-python.sh books ai     # named services
+COVERAGE=0 scripts/test-python.sh   # faster locally
+```
+
+Coverage is reported per service rather than combined: seven services each have a file
+called `models.py`, and a merged report would fold them into one line and produce a
+number that describes nothing.
+
+---
+
 ## Verified vs unverified
 
 Being precise about this matters more than a green checkmark.
 
 **Verified — actually executed:**
-- All 833 tests, on every commit
+- All 833 tests, on every commit, via `scripts/test-python.sh`
 - `ruff check` and `ruff format --check`
 - Every service's migrations — auth, books, payment, search, notifications, ai,
   automation: upgrade, `alembic check` (no drift), downgrade

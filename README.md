@@ -112,9 +112,11 @@ A service is then roughly this:
 ```python
 from knowledgeos_core import Components, ServiceSettings, create_app
 
+
 class Settings(ServiceSettings):
     service_name: str = "books"
     database_schema: str = "books"
+
 
 app = create_app(
     settings=Settings(),

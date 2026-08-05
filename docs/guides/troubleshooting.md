@@ -108,9 +108,11 @@ per-connection and breaks under transaction pooling.
 missing or wrong. It must be:
 
 ```python
-include_object=lambda obj, name, type_, reflected, compare_to: (
-    getattr(obj, "schema", None) == settings.database_schema
-),
+include_object = (
+    lambda obj, name, type_, reflected, compare_to: (
+        getattr(obj, "schema", None) == settings.database_schema
+    ),
+)
 ```
 
 Without it, Alembic sees every schema on the connection, finds them absent from this

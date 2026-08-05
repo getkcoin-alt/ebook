@@ -74,7 +74,14 @@ disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["apps", "packages"]
+# No `testpaths`. Running pytest from the repository root cannot collect this
+# monorepo: every service defines its own top-level `models`, `schemas`, `settings`
+# and `tests` modules, so two `tests/conftest.py` files under one rootdir fail
+# collection outright — and if they did not, the first service to import `models`
+# would win for every service collected after it.
+#
+# Use `scripts/test-python.sh`, which runs one pytest process per service with that
+# service's PYTHONPATH — the same way it runs in its own container.
 python_files = ["test_*.py"]
 addopts = "-q --strict-markers"
 markers = [

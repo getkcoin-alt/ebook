@@ -430,6 +430,62 @@ class Indexer:
             await session.commit()
         return len(document_ids)
 
+    async def index_book_ids(self, book_ids: Sequence[str]) -> tuple[int, int]:
+        """Index specific books by id, reading each from the catalogue.
+
+        What the automation pipeline calls when a book finishes processing. It could
+        wait for `book.published` to arrive through the event bus — and it does, this
+        is belt as well as braces — but the pipeline knows the exact moment the
+        record became correct, and a book that is live in the catalogue while absent
+        from search reads to a customer as a book that does not exist.
+
+        By id rather than by document: building a search document is this service's
+        job, and a caller that constructs one is a caller that has to be redeployed
+        every time the mapping changes.
+
+        Returns ``(indexed, missing)``. Never raises for a book that is simply gone —
+        that is removed from the index, which is the correct state, not an error.
+        """
+        index = self._settings.books_index
+        ledger = IndexLedger(index)
+        indexed = missing = 0
+
+        async with self._sessionmaker() as session:
+            for book_id in book_ids:
+                book = await self._load_book(book_id, {})
+                if book is None:
+                    await self._meili.delete_documents(index, [book_id])
+                    await ledger.record(
+                        session,
+                        book_id,
+                        content_hash="",
+                        event_id=None,
+                        event_type="automation.index",
+                        deleted=True,
+                    )
+                    missing += 1
+                    continue
+
+                document = build_book_document(book)
+                content_hash = checksum(document)
+                # Not gated on `should_apply`: the caller is asserting the record
+                # just changed, and an unchanged checksum here means the write it is
+                # confirming has not propagated yet. Skipping would leave the index
+                # stale precisely when someone asked it not to be.
+                await self._meili.add_documents(index, [document])
+                await ledger.record(
+                    session,
+                    book_id,
+                    content_hash=content_hash,
+                    event_id=None,
+                    event_type="automation.index",
+                )
+                indexed += 1
+            await session.commit()
+
+        logger.info("search.books_indexed_by_id", indexed=indexed, missing=missing)
+        return indexed, missing
+
     # ---- rebuilds --------------------------------------------------------
 
     async def run(

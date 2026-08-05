@@ -201,6 +201,13 @@ ROUTES: tuple[Route, ...] = (
     ),
     Route("/v1/notifications/channels", "notification", public=True, cache_ttl=300),
     Route("/v1/automation", "automation", require_auth=True, timeout=60),
+    # Running a job inline executes the whole pipeline in the request — minutes of
+    # CPU on a large book. The default 60s budget would cut the connection while the
+    # job carried on running, leaving the operator with no result and a job they
+    # cannot tell apart from a stuck one.
+    Route("/v1/automation/jobs", "automation", require_auth=True, timeout=600),
+    # A dry-run import validates up to a thousand rows; a real one creates them.
+    Route("/v1/automation/imports", "automation", require_auth=True, timeout=300),
     # `/v1/admin` is a shared prefix: the admin service owns it in general, but
     # each service serves the admin surface for the data it owns. Longest-prefix
     # matching sends those to the right place; without these lines they would all
@@ -217,6 +224,7 @@ ROUTES: tuple[Route, ...] = (
     # default admin route.
     Route("/v1/admin/search", "search", require_auth=True, timeout=300),
     Route("/v1/admin/notifications", "notification", require_auth=True, timeout=60),
+    Route("/v1/admin/automation", "automation", require_auth=True, timeout=60),
 )
 
 

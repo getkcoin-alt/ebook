@@ -249,6 +249,18 @@ class DocumentBatchRequest(BaseSchema):
     documents: list[dict[str, Any]] = Field(min_length=1, max_length=1000)
 
 
+class IndexBooksRequest(BaseSchema):
+    """Index specific books by id.
+
+    By id rather than by document: building a search document is this service's job,
+    and a caller that constructs one has to be redeployed every time the mapping
+    changes. The automation pipeline calls this the moment a book's record becomes
+    correct, rather than waiting for `book.published` to make its way through the bus.
+    """
+
+    book_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+
+
 class DocumentDeleteRequest(BaseSchema):
     index: str | None = None
     document_ids: list[str] = Field(min_length=1, max_length=1000)

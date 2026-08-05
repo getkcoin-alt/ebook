@@ -208,8 +208,13 @@ graph LR
     style D3 fill:#22543d,color:#fff
 ```
 
-Each stage is a separate Celery task with its result checkpointed to the
-`automation_jobs` table.
+Each stage checkpoints its result to the `job_stages` table. The **whole job runs as
+one Celery task**, not one task per stage — the resume story comes from the checkpoint
+either way, and a thirteen-link chain is thirteen chances for a redelivery, a
+visibility timeout or a dead worker to leave a job that is neither running nor failed
+with nothing looking for it. A single task also keeps the source bytes in memory
+across stages, instead of re-downloading a 300MB file at every hop or passing a book
+through Redis.
 
 **Why checkpoint per stage.** Watermarking a 300-page PDF is minutes of CPU;
 generating a description is an LLM call that may rate-limit. If stage 11 fails, the
@@ -301,9 +306,9 @@ Boundaries these tables live behind — see [ADR 0002](adr/0002-database-topolog
 | `auth` | users, sessions, refresh_tokens, oauth_accounts, signing_keys, audit_logs |
 | `books` | books, authors, categories, publishers, reviews, bookmarks, reading_progress, entitlements, book_versions |
 | `payment` | orders, order_items, payments, refunds, coupons, subscriptions, invoices |
-| `automation` | automation_jobs, job_stages, imports |
+| `automation` | automation_jobs, job_stages, imports, processed_events |
 | `notifications` | notifications, templates, delivery_attempts |
-| `ai` | ai_requests, usage_ledger |
+| `ai` | generations, conversations, messages, cached_results, cost_budgets, prompt_templates, processed_events |
 | `admin` | analytics_snapshots, moderation_queue |
 
 Three conventions applied throughout:

@@ -499,3 +499,58 @@ async def internal_list_categories(
         items=[CategoryOut.model_validate(row).model_dump(mode="json") for row in rows],
         next_cursor=_offset_cursor(params, total),
     )
+
+
+@internal_router.patch(
+    "/books/{book_id}",
+    response_model=BookDetail,
+    summary="Update a book (internal)",
+    description=(
+        "How the automation pipeline writes its results back into the catalogue — "
+        "the AI description, SEO metadata, tags, page count and the storage keys for "
+        "the derived cover, thumbnail, sample and converted formats.\n\n"
+        "The same partial-update semantics as the admin route: only fields present "
+        "in the body are applied. That is what lets the pipeline write the two "
+        "fields one stage produced without clearing the eleven it knows nothing "
+        "about — a full replace here would have each stage erase the last one's work."
+    ),
+)
+async def internal_update_book(
+    book_id: uuid.UUID,
+    payload: BookUpdate,
+    caller: InternalCaller,
+    session: DbSession,
+    catalogue: Catalogue,
+    ctx: Ctx,
+) -> BookDetail:
+    book = await catalogue.get_by_id(session, book_id, include_unpublished=True)
+    # `actor_id=None`: the change was made by a service, not a person, and recording
+    # a machine under a user's id makes the audit trail lie about who did what.
+    updated = await catalogue.update(session, book, payload, actor_id=None)
+    await _publish_event(ctx, EventType.BOOK_UPDATED, updated)
+    logger.info("book.updated_by_service", book_id=str(book_id), caller=caller)
+    return BookDetail.model_validate(updated)
+
+
+@internal_router.post(
+    "/books",
+    response_model=BookDetail,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a book (internal)",
+    description=(
+        "Used by the automation service's bulk import. Books created this way start "
+        "as drafts like any other — an import is a way to get rows into the "
+        "catalogue, not a way to bypass the review that publishing them requires."
+    ),
+)
+async def internal_create_book(
+    payload: BookCreate,
+    caller: InternalCaller,
+    session: DbSession,
+    catalogue: Catalogue,
+    ctx: Ctx,
+) -> BookDetail:
+    book = await catalogue.create(session, payload, actor_id=None)
+    await _publish_event(ctx, EventType.BOOK_CREATED, book)
+    logger.info("book.created_by_service", book_id=str(book.id), caller=caller)
+    return BookDetail.model_validate(book)

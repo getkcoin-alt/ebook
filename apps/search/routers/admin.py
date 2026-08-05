@@ -30,6 +30,7 @@ from schemas import (
     AnalyticsResponse,
     DocumentBatchRequest,
     DocumentDeleteRequest,
+    IndexBooksRequest,
     IndexHealth,
     IndexOperationResponse,
     ReindexRequest,
@@ -223,6 +224,32 @@ async def push_documents(
     )
     return IndexOperationResponse(
         index_name=index, accepted=indexed, skipped=skipped, failed=failed
+    )
+
+
+@internal_router.post(
+    "/index/books",
+    response_model=IndexOperationResponse,
+    summary="Index specific books by id (internal)",
+    description=(
+        "What the automation pipeline calls when a book finishes processing. It "
+        "could wait for `book.published` to arrive over the event bus — and it does, "
+        "this is belt as well as braces — but the pipeline knows the exact moment "
+        "the record became correct, and a book that is live in the catalogue while "
+        "absent from search reads to a customer as a book that does not exist.\n\n"
+        "Books that no longer exist are removed from the index rather than reported "
+        "as errors: absent is the correct state for them."
+    ),
+)
+async def index_books(
+    payload: IndexBooksRequest,
+    caller: InternalCaller,
+    indexer: Indexing,
+) -> IndexOperationResponse:
+    indexed, missing = await indexer.index_book_ids([str(book_id) for book_id in payload.book_ids])
+    logger.info("search.index_books_requested", caller=caller, indexed=indexed, missing=missing)
+    return IndexOperationResponse(
+        index_name=settings.books_index, accepted=indexed, skipped=missing, failed=0
     )
 
 

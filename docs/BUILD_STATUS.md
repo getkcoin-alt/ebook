@@ -4,7 +4,7 @@ What is actually built, tested and deployable — and what is not. Updated as ph
 land. Nothing on this page is aspirational: if it says tested, the test count is real
 and was run.
 
-Last updated: 2026-08-04
+Last updated: 2026-08-05
 
 ## Summary
 
@@ -12,16 +12,23 @@ Last updated: 2026-08-04
 |---|---|
 | Foundation (`packages/core-py`) | ✅ Complete · 63 tests |
 | Auth service | ✅ Complete · 76 tests |
-| API gateway | ✅ Complete · 42 tests |
-| Book service | ✅ Complete · 48 tests · 46 endpoints |
-| Payment service | ✅ Complete · 154 tests · 42 endpoints |
-| Search service | ✅ Complete · 96 tests · 14 endpoints |
+| API gateway | ✅ Complete · 39 tests |
+| Book service | ✅ Complete · 48 tests · 66 endpoints |
+| Payment service | ✅ Complete · 156 tests · 42 endpoints |
+| Search service | ✅ Complete · 96 tests · 15 endpoints |
 | Notification service | ✅ Complete · 69 tests · 28 endpoints |
-| AI · Automation · Workers · Admin | ⬜ Not started |
+| AI service | ✅ Complete · 48 tests · 12 endpoints |
+| Automation service | ✅ Complete · 130 tests · 17 endpoints |
+| Workers · Admin | ⬜ Not started |
 | Frontend | 🟡 `types` + `config` packages only |
 | Infrastructure, CI, docs | ✅ Complete |
 
-**548 tests passing.** Ruff clean across everything committed.
+**725 tests passing.** Ruff clean across everything committed.
+
+Three numbers above correct earlier revisions of this page. The gateway and payment
+test counts said 42 and 154; the real figures are 39 and 156. The book service's
+endpoint count said 46; counting its OpenAPI schema gives 66. All of these were
+measured, not estimated.
 
 ---
 
@@ -72,7 +79,7 @@ OpenAPI.
 
 ## ✅ Book service — `apps/books`
 
-48 tests, 46 endpoints, 17 tables. Catalogue with cursor pagination and facets,
+48 tests, 66 endpoints, 17 tables. Catalogue with cursor pagination and facets,
 authors/publishers/categories, reviews with moderation, bookmarks, reading progress,
 wishlists and collections. Downloads are gated on an **entitlement row** — checked
 before a presigned URL is minted, never after.
@@ -165,10 +172,53 @@ does not exist, and asking again looks like a dictionary attack.
 
 Migration verified: upgrade, `alembic check` (no drift), downgrade.
 
+## ✅ AI service — `apps/ai`
+
+48 tests. Generated book copy, SEO, tagging, catalogue-grounded chat, moderation and
+embeddings, behind a **hard daily cost ceiling** — reaching it returns 503 rather than
+continuing to spend. Checked before every model call, never after, from a single
+indexed row rather than a SUM over the ledger; spend recorded with a conditional
+UPDATE so concurrent requests cannot both claim the same headroom. Second per-user
+ceiling so one account cannot consume the platform budget.
+
+Two-tier cache (Redis over a table) keyed on everything affecting the output. Prompts
+are server-owned per task kind and user content only ever occupies the user turn.
+Moderation fails closed. Chat is grounded in real catalogue results and verifies
+entitlement before any book text reaches a prompt. Every outcome — cached, blocked and
+failed included — is recorded in the generation ledger.
+
+Migration verified: upgrade, `alembic check` (no drift), downgrade.
+
+## ✅ Automation service — `apps/automation`
+
+130 tests. The thirteen-stage ingestion pipeline, each stage checkpointed to
+`job_stages` so a job that dies at stage 11 resumes at stage 11 rather than redoing
+ten minutes of CPU and three dollars of tokens.
+
+Failures are sorted into three categories, and the distinction is the whole policy:
+**skipped** (nothing to do — recorded, pipeline continues), **terminal** (the input is
+wrong and will be wrong next time — no retry), and **transient** (checkpointed,
+requeued with jittered backoff, resumes at that stage). Enrichment stages never block
+publication; a book with no AI tags is publishable.
+
+`AUTO_PUBLISH` is off by default. A finished job leaves the book ready for a human.
+
+The untrusted-input handling is the part worth reviewing: zip bombs caught on declared
+size inside the entry loop, archive path traversal refused, XML entity declarations
+refused, image dimensions checked before decode, encrypted PDFs distinguished from
+permissions-only ones. No PDF renderer is installed — covers are extracted from
+embedded images rather than rasterised — deliberately trading a capability for a
+smaller attack surface.
+
+Test documents are real: actual PDFs with content streams, spec-shaped EPUB zips, and
+a genuine small archive declaring a huge expansion.
+
+Migration verified: upgrade, `alembic check` (no drift), downgrade.
+
 ## ⬜ Not yet started
 
-AI, automation, workers, admin, and the frontend application. Their directories
-exist; `apps/frontend` is empty apart from the shared `types` and `config` packages.
+Workers, admin, and the frontend application. Their directories exist; `apps/frontend`
+is empty apart from the shared `types` and `config` packages.
 
 ---
 
@@ -177,9 +227,10 @@ exist; `apps/frontend` is empty apart from the shared `types` and `config` packa
 Being precise about this matters more than a green checkmark.
 
 **Verified — actually executed:**
-- All 548 tests, on every commit
+- All 725 tests, on every commit
 - `ruff check` and `ruff format --check`
-- Auth, books, payment, search and notification migrations: upgrade, `alembic check` (no drift), downgrade
+- Every service's migrations — auth, books, payment, search, notifications, ai,
+  automation: upgrade, `alembic check` (no drift), downgrade
 - The auth service booting in `production` mode with real generated keys
 - `scripts/generate-keys.sh` output loading through the real key ring and signing a
   token that verifies

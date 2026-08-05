@@ -1,0 +1,23 @@
+# Automation service dependencies.
+# knowledgeos-core provides FastAPI, SQLAlchemy, Redis, boto3, httpx, structlog
+# and uvicorn.
+
+# Alembic migrations run through a blocking driver.
+psycopg[binary]>=3.2.3
+
+# Celery, for the worker that runs pipeline jobs off the request path. Named
+# directly rather than through core-py's `[tasks]` extra: the image installs
+# core-py from a path, and re-declaring it here as a requirement would make pip
+# resolve the same package twice.
+celery[redis]>=5.4.0
+kombu>=5.4.2
+
+# PDF inspection, compression, sample extraction and metadata. Pure Python — no
+# poppler, no mupdf, no native renderer. That is a deliberate limit: it means no
+# page rasterisation, and covers are extracted from embedded images instead. The
+# trade is a much smaller image and one fewer class of memory-safety bug reachable
+# from an uploaded file.
+pypdf>=5.1.0
+
+# Cover and thumbnail derivation.
+pillow>=11.0.0

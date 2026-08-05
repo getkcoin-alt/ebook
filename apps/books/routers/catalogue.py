@@ -34,6 +34,16 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/v1/books", tags=["catalogue"])
 
+#: Which format to hand over when the caller does not name one. PDF first because it
+#: renders identically everywhere, EPUB next because it reflows on a phone. Audiobook
+#: is absent on purpose: it is never the thing someone means by "download the book"
+#: when a text format also exists.
+_DOWNLOAD_PREFERENCE: tuple[BookFormat, ...] = (
+    BookFormat.PDF,
+    BookFormat.EPUB,
+    BookFormat.MOBI,
+)
+
 
 @router.get(
     "",
@@ -149,7 +159,9 @@ async def check_access(
         "Checks entitlement, then returns a short-lived presigned URL. The file "
         "itself never passes through this service — proxying a 40MB PDF would "
         "occupy a worker for the whole transfer.\n\n"
-        "402 when the book must be bought, 403 when access exists but is read-only."
+        "402 when the book must be bought, 403 when access exists but is read-only.\n\n"
+        "`format` is optional. Omit it and the book's own preferred format is used; "
+        "ask for one it does not have and the answer is 404 naming what it does have."
     ),
     dependencies=[Depends(rate_limit("authenticated"))],
 )
@@ -160,7 +172,7 @@ async def download_book(
     entitlements: Entitlements,
     storage: Storage,
     user: CurrentUser,
-    book_format: Annotated[BookFormat, Query(alias="format")] = BookFormat.PDF,
+    book_format: Annotated[BookFormat | None, Query(alias="format")] = None,
 ) -> DownloadTicket:
     from settings import settings
 
@@ -168,6 +180,22 @@ async def download_book(
     # Entitlement is checked BEFORE a URL is minted: the URL is the capability, and
     # anyone holding it can read the object until it expires.
     await entitlements.require_download(session, user_id=user_uuid(user), book=book)
+
+    if book_format is None:
+        # No format asked for, so serve what the book actually has. This defaulted to
+        # PDF, which 404s an EPUB-only title for a customer who has paid for it — a
+        # confusing answer to give someone holding a valid entitlement, and one the
+        # book itself has the information to avoid.
+        preferred = next(
+            (fmt for fmt in _DOWNLOAD_PREFERENCE if fmt.value in book.available_formats),
+            None,
+        )
+        if preferred is None:
+            raise NotFoundError(
+                "This book has no downloadable file.",
+                details={"book_id": str(book_id), "available": book.available_formats},
+            )
+        book_format = preferred
 
     key = book.file_key_for(book_format.value)
     if not key:

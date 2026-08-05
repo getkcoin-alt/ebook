@@ -135,6 +135,57 @@ class TestEntitlementGating:
         finally:
             client._transport.app.dependency_overrides.pop(core_deps.get_storage, None)
 
+    async def test_download_defaults_to_a_format_the_book_actually_has(
+        self, client, session, services, book_factory, as_user
+    ):
+        """An EPUB-only book, downloaded without naming a format.
+
+        This 404'd for a customer holding a valid entitlement, because the default was
+        a hardcoded `pdf` rather than anything the book knew about itself. Found by
+        buying and downloading a real EPUB through the deployed gateway.
+        """
+        book = await book_factory(pdf_key=None, epub_key="private/book/9/book.epub")
+        await services["entitlements"].grant(
+            session, user_id=READER_ID, book_id=book.id, source="purchase"
+        )
+        await session.commit()
+
+        from knowledgeos_core import deps as core_deps
+
+        class _Storage:
+            async def signed_download_url(self, key, *, expires_in, download_filename=None):
+                return f"https://cdn.example/{key}?sig=abc"
+
+        client._transport.app.dependency_overrides[core_deps.get_storage] = lambda: _Storage()
+        try:
+            as_user()
+            response = await client.get(f"/v1/books/{book.id}/download")
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["format"] == "epub"
+            assert body["filename"].endswith(".epub")
+
+            # Asking for a format it genuinely lacks is still a 404, and still says
+            # what is on offer instead.
+            missing = await client.get(f"/v1/books/{book.id}/download?format=pdf")
+            assert missing.status_code == 404
+            assert missing.json()["error"]["details"]["available"] == ["epub"]
+        finally:
+            client._transport.app.dependency_overrides.pop(core_deps.get_storage, None)
+
+    async def test_download_of_a_book_with_no_file_is_404(
+        self, client, session, services, book_factory, as_user
+    ):
+        book = await book_factory(pdf_key=None)
+        await services["entitlements"].grant(
+            session, user_id=READER_ID, book_id=book.id, source="purchase"
+        )
+        await session.commit()
+        as_user()
+        response = await client.get(f"/v1/books/{book.id}/download")
+        assert response.status_code == 404
+        assert response.json()["error"]["details"]["available"] == []
+
     async def test_read_only_entitlement_cannot_download(self, session, services, book_factory):
         book = await book_factory()
         await services["entitlements"].grant(

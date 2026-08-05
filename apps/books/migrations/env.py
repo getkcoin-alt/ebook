@@ -90,7 +90,7 @@ def run_migrations_online() -> None:
             connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
         elif connection.dialect.name == "sqlite":
             # SQLite has no schemas and is never a deployment target — it is only
-            # used to booksor and verify migrations offline, without a live Postgres.
+            # used to author and verify migrations offline, without a live Postgres.
             # ATTACHing a sibling file stands in for the schema and, unlike
             # ':memory:', survives the connection so `alembic check` can inspect it.
             main_path = Path(connection.engine.url.database or ":memory:")

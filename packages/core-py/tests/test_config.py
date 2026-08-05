@@ -112,3 +112,47 @@ class TestEnvironmentFlags:
         # unrecognised one must never stop a service from booting.
         settings = _settings(monkeypatch, RAILWAY_PRIVATE_DOMAIN="auth.railway.internal")
         assert settings.service_name  # constructed fine
+
+
+class TestProductionRequiresPostgres:
+    """SQLite is close enough to Postgres to *run* this code, which is exactly the
+    danger: a DATABASE_URL typo in production would boot cleanly and serve traffic
+    while losing every schema, JSONB column, partial index and CHECK constraint."""
+
+    def test_sqlite_is_refused_in_production(self, monkeypatch):
+        from knowledgeos_core.db import Database
+
+        settings = _settings(
+            monkeypatch,
+            ENVIRONMENT="production",
+            DATABASE_URL="sqlite+aiosqlite:///./oops.db",
+        )
+        with pytest.raises(RuntimeError, match="must be a PostgreSQL URL"):
+            Database(settings)
+
+    def test_sqlite_is_allowed_outside_production(self, monkeypatch):
+        """The test suites and offline migration work depend on it."""
+        from knowledgeos_core.db import Database
+
+        settings = _settings(
+            monkeypatch, ENVIRONMENT="local", DATABASE_URL="sqlite+aiosqlite:///:memory:"
+        )
+        assert Database(settings) is not None
+
+    def test_postgres_is_accepted_in_production(self, monkeypatch):
+        from knowledgeos_core.db import Database
+
+        settings = _settings(
+            monkeypatch,
+            ENVIRONMENT="production",
+            DATABASE_URL="postgres://u:p@db.internal:5432/kos",
+        )
+        assert Database(settings) is not None
+
+    def test_a_missing_url_still_fails_first(self, monkeypatch):
+        from knowledgeos_core.db import Database
+
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        settings = _settings(monkeypatch, ENVIRONMENT="production")
+        with pytest.raises(RuntimeError, match="DATABASE_URL is required"):
+            Database(settings)

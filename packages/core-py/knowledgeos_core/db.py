@@ -141,6 +141,19 @@ class Database:
             )
         self._settings = settings
         url = settings.database_url
+
+        # PostgreSQL is the only supported deployment target. SQLite is used by the
+        # test suites and to author migrations offline, and it is close enough to run
+        # this code — which is exactly the danger: a `DATABASE_URL` typo in production
+        # would boot cleanly, serve traffic, and lose every schema, JSONB column,
+        # partial index and CHECK constraint the platform depends on, with the first
+        # symptom arriving days later as corrupt data rather than an error.
+        if settings.is_production and not url.startswith("postgresql"):
+            raise RuntimeError(
+                f"{settings.service_name}: DATABASE_URL must be a PostgreSQL URL in "
+                f"production (got '{url.split('://')[0]}://…'). SQLite is for tests "
+                "and offline migration work only."
+            )
         options: dict[str, Any] = {"echo": settings.db_echo}
 
         # Connection pooling and driver options are dialect-specific. SQLite (used by

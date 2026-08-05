@@ -10,7 +10,7 @@ Last updated: 2026-08-05
 
 | | Status |
 |---|---|
-| Foundation (`packages/core-py`) | ✅ Complete · 63 tests |
+| Foundation (`packages/core-py`) | ✅ Complete · 67 tests |
 | Auth service | ✅ Complete · 96 tests |
 | API gateway | ✅ Complete · 39 tests |
 | Book service | ✅ Complete · 54 tests · 68 endpoints |
@@ -24,7 +24,7 @@ Last updated: 2026-08-05
 | Frontend | 🟡 `types` + `config` packages only |
 | Infrastructure, CI, docs | ✅ Complete |
 
-**861 tests passing.** Ruff clean across everything committed.
+**865 tests passing.** Ruff clean across everything committed.
 
 Three numbers above correct earlier revisions of this page. The gateway and payment
 test counts said 42 and 154; the real figures are 39 and 156. The book service's
@@ -314,7 +314,7 @@ number that describes nothing.
 Being precise about this matters more than a green checkmark.
 
 **Verified — actually executed:**
-- All 861 tests, on every commit, via `scripts/test-python.sh`
+- All 865 tests, on every commit, via `scripts/test-python.sh`
 - `ruff check` and `ruff format --check`
 - Every service's migrations — auth, books, payment, search, notifications, ai,
   automation: upgrade, `alembic check` (no drift), downgrade
@@ -331,6 +331,11 @@ Being precise about this matters more than a green checkmark.
   SQLite and `fakeredis` by design, so migrations are verified against SQLite rather
   than PostgreSQL. Run `alembic upgrade head` against a real Postgres before
   trusting production.
+
+  PostgreSQL is the only supported deployment target, and `Database.__init__` now
+  refuses a non-Postgres `DATABASE_URL` when `ENVIRONMENT=production` — SQLite is
+  close enough to *run* this code, which is exactly why a typo there needs to fail
+  at boot rather than days later as corrupt data.
 
   What that leaves unproven, specifically: `JSONB` columns (which degrade to `JSON`
   on SQLite), the partial unique index on `automation_jobs` — the predicate is in the

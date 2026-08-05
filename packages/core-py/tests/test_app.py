@@ -6,6 +6,8 @@ eleven services at once, so the assertions are deliberately strict.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import pytest
 from httpx import AsyncClient
 
@@ -142,26 +144,50 @@ class TestRequestCorrelation:
 
 
 class TestDocsExposure:
-    async def test_docs_are_closed_in_production(self, client: AsyncClient) -> None:
-        assert (await client.get("/docs")).status_code == 404
-        assert (await client.get("/openapi.json")).status_code == 404
-
-    async def test_docs_open_outside_production(self, router) -> None:
+    @staticmethod
+    def _client(**overrides):
         from asgi_lifespan import LifespanManager
         from httpx import ASGITransport
 
         from knowledgeos_core import Components, ServiceSettings, create_app
 
-        app = create_app(
-            settings=ServiceSettings(service_name="dev-svc", environment="local"),
-            components=Components(),
-            routers=[router],
-        )
-        async with (
-            LifespanManager(app),
-            AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as dev_client,
-        ):
-            assert (await dev_client.get("/openapi.json")).status_code == 200
+        @asynccontextmanager
+        async def _ctx(router):
+            app = create_app(
+                settings=ServiceSettings(service_name="docs-svc", **overrides),
+                components=Components(),
+                routers=[router],
+            )
+            async with (
+                LifespanManager(app),
+                AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c,
+            ):
+                yield c
+
+        return _ctx
+
+    async def test_swagger_is_closed_in_production(self, client: AsyncClient) -> None:
+        # The HTML page is for humans and has no business on a production service.
+        assert (await client.get("/docs")).status_code == 404
+        assert (await client.get("/redoc")).status_code == 404
+
+    async def test_schema_stays_open_in_production(self, client: AsyncClient) -> None:
+        # The gateway builds its aggregated specification by fetching exactly this
+        # path from every upstream. Closing it alongside Swagger left the aggregate
+        # permanently empty in the only environment it exists to serve.
+        assert (await client.get("/openapi.json")).status_code == 200
+
+    async def test_schema_can_be_closed_explicitly(self, router) -> None:
+        # The escape hatch for a service that does get public ingress.
+        async with self._client(environment="production", expose_openapi_schema=False)(
+            router
+        ) as client:
+            assert (await client.get("/openapi.json")).status_code == 404
+
+    async def test_docs_open_outside_production(self, router) -> None:
+        async with self._client(environment="local")(router) as client:
+            assert (await client.get("/openapi.json")).status_code == 200
+            assert (await client.get("/docs")).status_code == 200
 
 
 class TestBodyLimit:

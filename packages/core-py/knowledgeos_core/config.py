@@ -104,6 +104,9 @@ class ServiceSettings(BaseSettings):
     metrics_enabled: bool = True
     otel_enabled: bool = False
     otel_exporter_otlp_endpoint: str | None = None
+    #: Serve ``/openapi.json`` even in production. See :attr:`schema_enabled` — the
+    #: gateway needs it to aggregate, and upstreams have no public ingress.
+    expose_openapi_schema: bool = True
 
     # ---- datastores -----------------------------------------------------
     database_url: str | None = None
@@ -192,6 +195,24 @@ class ServiceSettings(BaseSettings):
     def docs_enabled(self) -> bool:
         """Swagger is closed in production; the gateway serves an aggregated spec."""
         return not self.is_production
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def schema_enabled(self) -> bool:
+        """Whether ``/openapi.json`` is served.
+
+        Deliberately *not* the same switch as :attr:`docs_enabled`. Closing Swagger
+        in production closes a human-facing HTML page. Closing the schema as well
+        closes the machine-readable contract the gateway aggregates — it builds
+        ``/openapi.json`` by fetching that path from every upstream, so the two
+        properties being one property meant the aggregated spec was permanently
+        empty in production, which is the only environment it exists for.
+
+        Serving it costs nothing here: on Railway a service is reachable only over
+        the private network, so the sole caller is the gateway. Set
+        ``EXPOSE_OPENAPI_SCHEMA=false`` on any service that does get public ingress.
+        """
+        return self.expose_openapi_schema or self.docs_enabled
 
 
 @functools.lru_cache(maxsize=1)

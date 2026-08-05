@@ -120,5 +120,17 @@ class Settings(ServiceSettings):
         """
         return False
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def schema_enabled(self) -> bool:
+        """Also always ``False``, and for the same reason.
+
+        The base class serves ``/openapi.json`` in production so the gateway can
+        aggregate upstream schemas. The gateway is the aggregator, and registers
+        that path itself — letting FastAPI register it too would shadow the
+        aggregated document with a spec describing one catch-all proxy route.
+        """
+        return False
+
 
 settings = Settings()

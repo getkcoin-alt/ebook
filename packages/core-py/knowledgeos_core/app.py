@@ -241,7 +241,7 @@ def create_app(
         # ORJSONResponse and is the path it now optimises.
         docs_url="/docs" if settings.docs_enabled else None,
         redoc_url="/redoc" if settings.docs_enabled else None,
-        openapi_url="/openapi.json" if settings.docs_enabled else None,
+        openapi_url="/openapi.json" if settings.schema_enabled else None,
         root_path=settings.root_path,
         # Trailing-slash redirects break signed POSTs and leak query strings through
         # the Location header, so route matching is exact.

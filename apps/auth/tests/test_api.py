@@ -489,8 +489,13 @@ class TestAdminBan:
         )
         # A support role that can read but not write. Staff answering "did my payment
         # go through" should not also be able to ban an account.
+        #
+        # `moderator` already grants `users:read`, so no extra grant is needed — and
+        # the column is `extra_permissions`, not `permissions`. Assigning the latter
+        # sets a plain Python attribute SQLAlchemy ignores, which would make this
+        # assertion pass without proving anything.
         support.roles = ["moderator"]
-        support.permissions = ["users:read"]
+        support.extra_permissions = []
         await session.commit()
 
         login = await client.post(

@@ -166,3 +166,24 @@ real code rather than being stubbed.
 - Failed logins and lockouts appear as `auth.account_locked`; a spike in
   `knowledgeos_auth_events_total{outcome="failure"}` is the credential-stuffing
   signal, and there is a Prometheus alert for it.
+
+## The first admin account
+
+Registration only ever produces a `user`, and promotion needs a permission only a
+superadmin holds — so the first one cannot be made through the API. `bootstrap.py` is
+the only way out of that loop, and deliberately the only one: no seeded default
+account, no "first signup becomes admin" rule, no bootstrap endpoint sitting on the
+public API waiting to be found.
+
+```bash
+python -m bootstrap --email you@company.com
+```
+
+It generates a password, prints it **once**, and stores it nowhere. It refuses to run
+a second time unless given `--force`, and passing the address of an existing account
+promotes that account rather than creating a duplicate — the common real sequence is
+that somebody signs up normally first and needs elevating afterwards.
+
+The account is created email-verified, because verification needs a mail provider and
+configuring one is the first thing this account exists to do. A bootstrap that depends
+on the thing it is bootstrapping is not a bootstrap.

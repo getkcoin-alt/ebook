@@ -11,7 +11,7 @@ Last updated: 2026-08-05
 | | Status |
 |---|---|
 | Foundation (`packages/core-py`) | ✅ Complete · 67 tests |
-| Auth service | ✅ Complete · 96 tests |
+| Auth service | ✅ Complete · 115 tests |
 | API gateway | ✅ Complete · 39 tests |
 | Book service | ✅ Complete · 54 tests · 68 endpoints |
 | Payment service | ✅ Complete · 156 tests · 42 endpoints |
@@ -24,12 +24,14 @@ Last updated: 2026-08-05
 | Frontend | 🟡 `types` + `config` packages only |
 | Infrastructure, CI, docs | ✅ Complete |
 
-**865 tests passing.** Ruff clean across everything committed.
+**884 tests passing.** Ruff clean across everything committed.
 
-Three numbers above correct earlier revisions of this page. The gateway and payment
-test counts said 42 and 154; the real figures are 39 and 156. The book service's
-endpoint count said 46; counting its OpenAPI schema gives 66. All of these were
-measured, not estimated.
+Every figure on this page is read off a real run of `scripts/test-python.sh`, not
+carried forward from a previous revision. Several were wrong for exactly that reason —
+the gateway and payment counts said 42 and 154 against real figures of 39 and 156, and
+the book service's endpoint count said 46 where its OpenAPI schema has 66. The
+per-service sections below drifted the same way and have been re-measured against the
+same run as the table.
 
 ---
 
@@ -60,7 +62,7 @@ operational layer from this and writes only domain logic.
 
 ## ✅ Auth service — `apps/auth`
 
-76 tests. RS256 tokens with `kid` rotation and JWKS; opaque refresh tokens with
+115 tests. RS256 tokens with `kid` rotation and JWKS; opaque refresh tokens with
 **rotation + reuse detection**; TOTP 2FA with replay blocking and Fernet-encrypted
 secrets; OAuth (Google, GitHub) with PKCE and signed state; RBAC; sessions; audit
 log; Redis ban denylist.
@@ -71,16 +73,22 @@ timing for unknown addresses.
 Migration verified: upgrade creates all 10 tables, `alembic check` reports no drift,
 downgrade is clean.
 
+The first superadmin is created by `python -m bootstrap`, an operator CLI — not by a
+seeded default account, not by "the first signup becomes an admin", and not by a
+bootstrap endpoint on the public API. Registration only ever produces a `user`, and
+promotion needs a permission only a superadmin holds, so the loop has to be broken from
+outside it. See `docs/MANUAL_SETUP.md` § 13a.
+
 ## ✅ API gateway — `apps/gateway`
 
-35 tests. Declarative route table, offline token verification, ban denylist, rate
+39 tests. Declarative route table, offline token verification, ban denylist, rate
 limiting, response cache with **proven cross-user isolation**, streaming reverse
 proxy with hop-by-hop header stripping, per-upstream connection pools, aggregated
 OpenAPI.
 
 ## ✅ Book service — `apps/books`
 
-48 tests, 66 endpoints, 17 tables. Catalogue with cursor pagination and facets,
+54 tests, 66 endpoints, 17 tables. Catalogue with cursor pagination and facets,
 authors/publishers/categories, reviews with moderation, bookmarks, reading progress,
 wishlists and collections. Downloads are gated on an **entitlement row** — checked
 before a presigned URL is minted, never after.
@@ -95,7 +103,7 @@ Migration verified: upgrade, `alembic check` (no drift), downgrade.
 
 ## ✅ Payment service — `apps/payment`
 
-154 tests, 42 endpoints, 12 tables. Orders, Razorpay and Stripe gateways, refunds,
+156 tests, 42 endpoints, 12 tables. Orders, Razorpay and Stripe gateways, refunds,
 coupons, GST invoicing, subscriptions and affiliate commission.
 
 Four rules govern it, and the tests exist to hold them:
@@ -175,7 +183,7 @@ Migration verified: upgrade, `alembic check` (no drift), downgrade.
 
 ## ✅ AI service — `apps/ai`
 
-48 tests. Generated book copy, SEO, tagging, catalogue-grounded chat, moderation and
+55 tests. Generated book copy, SEO, tagging, catalogue-grounded chat, moderation and
 embeddings, behind a **hard daily cost ceiling** — reaching it returns 503 rather than
 continuing to spend. Checked before every model call, never after, from a single
 indexed row rather than a SUM over the ledger; spend recorded with a conditional
@@ -314,7 +322,7 @@ number that describes nothing.
 Being precise about this matters more than a green checkmark.
 
 **Verified — actually executed:**
-- All 865 tests, on every commit, via `scripts/test-python.sh`
+- All 884 tests, on every commit, via `scripts/test-python.sh`
 - `ruff check` and `ruff format --check`
 - Every service's migrations — auth, books, payment, search, notifications, ai,
   automation: upgrade, `alembic check` (no drift), downgrade

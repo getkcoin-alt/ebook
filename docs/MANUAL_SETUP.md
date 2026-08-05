@@ -399,6 +399,65 @@ Firebase Cloud Messaging:
 
 ---
 
+## 13a. 🔴 The first admin account
+
+Registration only ever produces a `user`, and promoting anyone needs a permission only
+a superadmin holds — so the very first one cannot be created through the API. That is
+deliberate: the alternative is a seeded default account or a "first signup becomes
+admin" rule, and both are doors that stay open after you have walked through them.
+
+Run this **once**, after `alembic upgrade head`, against the auth service:
+
+```bash
+railway run --service auth python -m bootstrap --email you@yourcompany.com
+```
+
+It prints a generated password **once** and stores it nowhere:
+
+```
+  Created: you@yourcompany.com
+  Roles:  superadmin
+  Id:     8e4e0f1e-5a13-4029-820c-b57292fe537a
+
+  Password: @axsCdvKPCUKAFW+9*CHRbra
+
+  This is shown once and is not stored anywhere. Save it now.
+```
+
+Save it in a password manager before closing the terminal. If it is lost, use the
+ordinary password-reset flow — there is no way to print it again.
+
+To choose your own instead (avoid this on a shared shell; it lands in the history):
+
+```bash
+railway run --service auth python -m bootstrap \
+  --email you@yourcompany.com --password 'a long passphrase you already trust'
+```
+
+**Already signed up through the normal flow?** Pass the same address and it promotes
+that account rather than creating a second one, keeping its existing roles.
+
+**It refuses to run twice.** A second superadmin needs `--force`, so an accidental
+re-run cannot silently mint another account with total access.
+
+### Immediately afterwards
+
+1. **Sign in and enrol 2FA** — `POST /v1/auth/mfa/enroll`, then `/mfa/confirm`. An
+   operator account without a second factor is one phished password away from the
+   whole platform, and this account holds every permission there is.
+2. **Save the recovery codes** somewhere other than the password manager holding the
+   password. They exist for the day the phone is lost.
+3. **Create individual accounts for everyone else** and give them the narrowest role
+   that works — `moderator` for review queues, `admin` for day-to-day operations.
+   Sharing the superadmin login means the audit log records "superadmin did it" for
+   every action anyone takes, which makes it worthless.
+
+Note that **`admin` deliberately does not grant `settings:write`**: coupons, plans,
+notification templates, feature flags and manual worker triggers stay superadmin-only.
+See `docs/ADMIN_FRONTEND_PROMPT.md` if that split is not what you want.
+
+---
+
 ## 14. 🔴 Domains and public URLs
 
 ```
@@ -471,6 +530,8 @@ Before the first production deploy:
 - [ ] SPF, DKIM and DMARC configured on the sending domain
 - [ ] Postgres backups enabled in Railway
 - [ ] Every default password from `.env.example` replaced
+- [ ] The first superadmin created with `python -m bootstrap`, and 2FA enrolled on it
+- [ ] Individual accounts created for everyone else — nobody shares the superadmin login
 - [ ] `LOG_FORMAT=json` (structured logs are what make an incident debuggable)
 
 ## Rotating a secret

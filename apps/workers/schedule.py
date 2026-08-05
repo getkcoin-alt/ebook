@@ -210,6 +210,16 @@ SCHEDULE: tuple[ScheduledJob, ...] = (
             "else."
         ),
     ),
+    # ---- admin -----------------------------------------------------------
+    ScheduledJob(
+        name="admin.prune-flag-audits",
+        service="admin",
+        path="/internal/maintenance/prune-audits",
+        minute="43",
+        hour="5",
+        timeout=120.0,
+        description="Drop flag audit rows past retention.",
+    ),
     # ---- auth ------------------------------------------------------------
     ScheduledJob(
         name="auth.prune",

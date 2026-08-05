@@ -307,9 +307,10 @@ Boundaries these tables live behind — see [ADR 0002](adr/0002-database-topolog
 | `books` | books, authors, categories, publishers, reviews, bookmarks, reading_progress, entitlements, book_versions |
 | `payment` | orders, order_items, payments, refunds, coupons, subscriptions, invoices |
 | `automation` | automation_jobs, job_stages, imports, processed_events |
-| `notifications` | notifications, templates, delivery_attempts |
+| `notifications` | notifications, notification_templates, deliveries, notification_preferences, suppressions, devices, processed_events |
+| `workers` | task_runs |
 | `ai` | generations, conversations, messages, cached_results, cost_budgets, prompt_templates, processed_events |
-| `admin` | analytics_snapshots, moderation_queue |
+| `admin` | feature_flags, flag_audits |
 
 Three conventions applied throughout:
 

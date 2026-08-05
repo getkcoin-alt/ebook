@@ -1,0 +1,9 @@
+# Admin service dependencies.
+# knowledgeos-core provides FastAPI, SQLAlchemy, Redis, httpx, structlog and uvicorn.
+#
+# Deliberately short. This service aggregates what other services already expose and
+# owns two small tables; anything more here would be logic that belongs to whichever
+# service owns the data.
+
+# Alembic migrations run through a blocking driver.
+psycopg[binary]>=3.2.3

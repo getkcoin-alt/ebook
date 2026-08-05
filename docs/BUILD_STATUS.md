@@ -20,11 +20,11 @@ Last updated: 2026-08-05
 | AI service | ✅ Complete · 48 tests · 12 endpoints |
 | Automation service | ✅ Complete · 130 tests · 17 endpoints |
 | Workers service | ✅ Complete · 46 tests · 7 endpoints |
-| Admin service | ⬜ Not started |
+| Admin service | ✅ Complete · 57 tests · 11 endpoints |
 | Frontend | 🟡 `types` + `config` packages only |
 | Infrastructure, CI, docs | ✅ Complete |
 
-**776 tests passing.** Ruff clean across everything committed.
+**833 tests passing.** Ruff clean across everything committed.
 
 Three numbers above correct earlier revisions of this page. The gateway and payment
 test counts said 42 and 154; the real figures are 39 and 156. The book service's
@@ -245,10 +245,41 @@ security-relevant audit actions are exempt from retention entirely.
 
 Migration verified: upgrade, `alembic check` (no drift), downgrade.
 
+## ✅ Admin service — `apps/admin`
+
+57 tests. The operator dashboard and the home of feature flags.
+
+**It owns almost nothing.** Every number comes from the service that produced it, read
+through the same admin endpoint an operator could call directly — which is what keeps
+the figure on this page identical to the one on the owning service's own screen. A
+second copy here would be a second copy that drifts, and nobody looking at it would
+know there were two.
+
+**It forwards the operator's own bearer token** when it fans out. Calling siblings
+under its own HMAC identity would make it a confused deputy: it holds a key that opens
+every internal route, so anyone past *its* permission check would receive data from
+every service regardless of what they may see there. Each service instead applies its
+own check against the real operator.
+
+Every panel carries its own status and its own timeout, fetched concurrently. One
+service restarting produces one unavailable card, not a red page. Upstream error text
+never reaches the browser, and panel payloads are flattened and bounded so this
+service's response size is not a function of somebody else's schema.
+
+The two tables it does own are feature flags and their audit history, because every
+service reads flags and none owns them. Evaluation returns **decisions, not rules** —
+handing back a rollout percentage would make each service implement the bucketing, and
+two hash implementations diverge into a user who has a feature on one page and not the
+next. Bucketing is a stable hash of flag key and user id, so raising a rollout only
+ever adds people, and the first cohort differs per flag.
+
+Migration verified: upgrade, `alembic check` (no drift), downgrade.
+
 ## ⬜ Not yet started
 
-The admin service and the frontend application. Their directories exist;
-`apps/frontend` is empty apart from the shared `types` and `config` packages.
+The frontend application. `apps/frontend` is empty apart from the shared `types` and
+`config` packages; `docs/FRONTEND_LOVABLE_PROMPT.md` is the brief for building it
+against the deployed API.
 
 ---
 
@@ -257,7 +288,7 @@ The admin service and the frontend application. Their directories exist;
 Being precise about this matters more than a green checkmark.
 
 **Verified — actually executed:**
-- All 776 tests, on every commit
+- All 833 tests, on every commit
 - `ruff check` and `ruff format --check`
 - Every service's migrations — auth, books, payment, search, notifications, ai,
   automation: upgrade, `alembic check` (no drift), downgrade

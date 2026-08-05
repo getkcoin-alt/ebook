@@ -228,6 +228,11 @@ ROUTES: tuple[Route, ...] = (
     # Triggering a sweep by hand runs it inline and waits for the owning service,
     # and the schedule's own budgets go up to fifteen minutes.
     Route("/v1/admin/workers", "workers", require_auth=True, timeout=900),
+    # The dashboard fans out to every service; its own page budget is 12s, and this
+    # sits above it so the gateway is never the thing that gives up first.
+    Route("/v1/admin/dashboard", "admin", require_auth=True, timeout=30),
+    Route("/v1/admin/health-board", "admin", require_auth=True, timeout=30),
+    Route("/v1/admin/flags", "admin", require_auth=True),
 )
 
 

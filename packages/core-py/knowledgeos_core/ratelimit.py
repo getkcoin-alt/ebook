@@ -89,7 +89,14 @@ POLICIES: dict[str, RateLimitPolicy] = {
     # Credential endpoints are brute-force targets, so they get a far tighter budget
     # measured over a long window rather than a per-minute one.
     "login": RateLimitPolicy(limit=10, window_seconds=900, scope="login"),
-    "register": RateLimitPolicy(limit=5, window_seconds=3600, scope="register"),
+    # Registration is deliberately loose. Five per hour was blocking real people:
+    # Indian mobile carriers put thousands of subscribers behind one NAT address, so
+    # a handful of genuine sign-ups from the same network locked everybody else out,
+    # with no way for them to tell why. The abuse this guarded against is bounded
+    # anyway — an account is unusable until its emailed link is followed, so a
+    # scripted signup buys nothing without a working mailbox. The general anonymous
+    # ceiling (60/min) still stops a flood.
+    "register": RateLimitPolicy(limit=200, window_seconds=3600, scope="register"),
     "password_reset": RateLimitPolicy(limit=5, window_seconds=3600, scope="password_reset"),
     # AI and search calls cost real money / CPU per request.
     "ai": RateLimitPolicy(limit=30, window_seconds=60, scope="ai"),

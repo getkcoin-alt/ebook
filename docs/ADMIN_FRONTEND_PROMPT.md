@@ -27,7 +27,7 @@ A complete REST API exists and is deployed. Every piece of data comes from it ov
 HTTP through one base URL:
 
 ```
-VITE_API_BASE_URL = https://gateway-production-c3e0.up.railway.app
+VITE_API_BASE_URL = https://api.allelearning.in
 ```
 
 That is the API gateway; it routes every path below to the right service. **Never call

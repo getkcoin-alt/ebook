@@ -10,11 +10,12 @@ returned.
 
 | | |
 |---|---|
-| **Base URL** | `https://gateway-production-c3e0.up.railway.app` |
+| **Base URL** | `https://api.allelearning.in` |
+| **Web app** | `https://allelearning.in` (and `www.`) |
 | **Machine-readable spec** | `GET /openapi.json` — every path, schema and enum |
 | **Auth** | `Authorization: Bearer <access token>` (RS256 JWT) |
 | **Content type** | `application/json` throughout, except presigned uploads |
-| **Not deployed** | The automation service. Every `/v1/automation/*` path returns 502. |
+| **Not deployed** | The automation service. Every `/v1/automation/*` path returns 503. |
 | **Not configured** | Razorpay and Stripe credentials. See [Payments](#payments). |
 
 Nothing below is aspirational. Where a capability is present but unconfigured, it
@@ -104,6 +105,21 @@ POST /v1/auth/refresh
 {"refresh_token": "…"}
 ```
 
+> **Why the API is on `api.allelearning.in` and not somewhere else.**
+>
+> The refresh and CSRF cookies are `SameSite=Strict`, which means the browser
+> attaches them only to same-site requests. `allelearning.in` and
+> `api.allelearning.in` share a registrable domain, so they are same-site and the
+> cookies flow. Move the API to an unrelated host — `*.up.railway.app`, a different
+> domain — and the browser silently stops sending them: login still appears to work,
+> because the access token comes back in the body, and then every session dies at
+> the fifteen-minute mark with no way to refresh.
+>
+> If the API ever has to live on a different registrable domain, the cookies must be
+> changed to `SameSite=None; Secure`. That re-opens the CSRF surface `Strict` closes,
+> and third-party cookie restrictions will break it again later. Keeping the API on a
+> subdomain is the cheaper answer.
+
 **Two-factor** is TOTP, enrolled at `POST /v1/auth/mfa/enroll` and confirmed at
 `/mfa/confirm`. When a user has it enabled, `POST /v1/auth/login` does not return
 tokens — it returns an MFA challenge, and the client completes the exchange at
@@ -147,8 +163,8 @@ their text in production.
 | 415 | `unsupported_media_type` | Content type not accepted for this route |
 | 422 | `validation_error` | Failed schema validation; `details.fields` lists what and where |
 | 429 | `rate_limited` | See [Rate limits](#rate-limits); `details.scope` names the bucket |
-| 502 | `upstream_error` | A service failed or is not deployed |
-| 503 | `service_unavailable` | A dependency is down; the platform is degraded, not broken |
+| 502 | `upstream_error` | A service answered, but with something the gateway could not use |
+| 503 | `service_unavailable` | A dependency is unreachable or not deployed; the platform is degraded, not broken |
 
 **402 versus 403 is deliberate.** A book you have not bought is a 402, because the
 right response is to offer to sell it. A 403 means no amount of money will help.

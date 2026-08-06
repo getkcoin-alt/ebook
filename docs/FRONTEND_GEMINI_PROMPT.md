@@ -20,13 +20,13 @@ that will otherwise cost you a rebuild.
 ## Before you paste
 
 **1. The API is live. Verify against it, do not guess.**
-`https://gateway-production-c3e0.up.railway.app/openapi.json` is the authoritative
+`https://api.allelearning.in/openapi.json` is the authoritative
 contract — 185 paths, 220 operations, 256 schemas — and it is generated from the
 running services. `docs/API.md` is the prose version. When this prompt and the spec
 disagree, the spec is right.
 
 **2. Two services are deliberately absent.** The automation service is not deployed;
-every `/v1/automation/*` call returns 502. Razorpay and Stripe have no credentials;
+every `/v1/automation/*` call returns 503. Razorpay and Stripe have no credentials;
 `GET /v1/payments/providers` returns `{"providers": [], "default": null}`. Both are
 scope decisions, not outages. The app must degrade cleanly, not show a broken page.
 
@@ -55,7 +55,7 @@ A complete REST API exists. Every piece of data comes from it over HTTP through 
 base URL:
 
 ```
-VITE_API_BASE_URL = https://gateway-production-c3e0.up.railway.app
+VITE_API_BASE_URL = https://api.allelearning.in
 ```
 
 That is the gateway; it routes every path to the right service. **Never call a
@@ -236,7 +236,7 @@ daily cost ceiling ($10 platform-wide, $1 per user) and reaching it returns `503
 Call `status` before rendering any AI affordance. A chat button that 503s is worse
 than one that was never drawn. The AI drawer already exists — gate it on this.
 
-**`/v1/automation/*` returns 502.** The Admin → Automation page must render an
+**`/v1/automation/*` returns 503.** The Admin → Automation page must render an
 explicit "this service is not deployed" state. Not a spinner, not an error toast, and
 not a blank table.
 

@@ -34,7 +34,7 @@ against the real system with no stubs:
 
 | | |
 |---|---|
-| Gateway | `https://gateway-production-c3e0.up.railway.app` |
+| Gateway | `https://api.allelearning.in` |
 | Aggregated OpenAPI | 185 paths · 220 operations · 256 schemas |
 | Database | 67 tables across 8 schemas, all migrations applied |
 | Object storage | MinIO over HTTPS, presigned upload and download |

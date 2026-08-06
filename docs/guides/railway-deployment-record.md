@@ -12,7 +12,7 @@ Railway docs.
 | Workspace | Project KGF |
 | Environment | `production` |
 | Repo / branch | `getkcoin-alt/ebook` · `claude/knowledgeos-ebook-platform-by63ba` |
-| Public URL | `https://gateway-production-c3e0.up.railway.app` |
+| Public URL | `https://api.allelearning.in` |
 
 ## Services
 
@@ -186,9 +186,9 @@ than a direct observation. **Check the URL from a browser to confirm.**
 ## Verifying a deploy
 
 ```bash
-curl https://gateway-production-c3e0.up.railway.app/health
-curl https://gateway-production-c3e0.up.railway.app/health/ready   # per-upstream state
-curl https://gateway-production-c3e0.up.railway.app/docs           # aggregated API docs
+curl https://api.allelearning.in/health
+curl https://api.allelearning.in/health/ready   # per-upstream state
+curl https://api.allelearning.in/docs           # aggregated API docs
 ```
 
 `/health/ready` naming each upstream is the fastest way to see which service is down.

@@ -27,7 +27,7 @@ from io import BytesIO
 
 import httpx
 
-GATEWAY = os.environ.get("KOS_GATEWAY", "https://gateway-production-c3e0.up.railway.app")
+GATEWAY = os.environ.get("KOS_GATEWAY", "https://api.allelearning.in")
 results: list[tuple[str, bool, str]] = []
 
 

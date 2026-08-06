@@ -18,7 +18,7 @@ import sys
 
 import httpx
 
-GATEWAY = os.environ.get("KOS_GATEWAY", "https://gateway-production-c3e0.up.railway.app")
+GATEWAY = os.environ.get("KOS_GATEWAY", "https://api.allelearning.in")
 
 # (key, channel, category, subject, body_text, required_variables)
 TEMPLATES = [

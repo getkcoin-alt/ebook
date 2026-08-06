@@ -25,7 +25,7 @@ HMAC-only internal routes the browser never sees.
 Live gateway:
 
 ```
-VITE_API_BASE_URL = https://gateway-production-c3e0.up.railway.app
+VITE_API_BASE_URL = https://api.allelearning.in
 ```
 
 Every path below is relative to it. The gateway routes `/v1/auth`, `/v1/books`,

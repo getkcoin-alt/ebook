@@ -552,11 +552,40 @@ is no "send email" call for other services to make, because then changing a subj
 line would be a five-service deploy.
 
 `GET /v1/notifications/channels` is worth calling before rendering a preferences
-screen: on this deployment **email is configured and SMS, WhatsApp and push are
-not**, so offering those toggles would promise something that cannot be delivered.
+screen:
+
+```json
+{"channels": ["in_app", "email"], "sending_enabled": true, "email_provider": "smtp"}
+```
+
+Render toggles only for the channels in that array. On this deployment **email is
+configured over SMTP and SMS, WhatsApp and push are not**, so offering those toggles
+would promise something that cannot be delivered.
 
 One rule outranks the rest: **a suppressed address is never contacted again**,
 transactional or not, and removal is an operator action.
+
+> **Email currently reaches Gmail and is refused there.** The path itself works end
+> to end: the service authenticates over SMTP, postfix accepts and queues the
+> message, and it is delivered to Gmail's servers. Gmail then rejects it:
+>
+> ```
+> 550-5.7.26 Your email has been blocked because the sender is unauthenticated.
+> 550-5.7.26 Gmail requires all senders to authenticate with either SPF or DKIM.
+> ```
+>
+> SPF and DKIM are DNS records on the sending domain. Mail currently leaves as
+> `@srv1628639.hstgr.cloud`, whose DNS is not ours to edit, so no application change
+> fixes this. Two ways out, in order of preference:
+>
+> 1. **Use a transactional provider.** The service already implements one — set
+>    `EMAIL_PROVIDER=resend` and `RESEND_API_KEY` on the notification service, and
+>    delivery, SPF, DKIM and bounce webhooks come with it. No code change.
+> 2. **Point a domain you control at the host**, publish SPF and DKIM records for
+>    it, and set `FROM_EMAIL` to an address on that domain.
+>
+> Until one of those is done, treat email as queued but undeliverable to Gmail,
+> Yahoo and Outlook. In-app notifications are unaffected.
 
 ### AI
 

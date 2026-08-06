@@ -4,27 +4,99 @@ What is actually built, tested and deployable — and what is not. Updated as ph
 land. Nothing on this page is aspirational: if it says tested, the test count is real
 and was run.
 
-Last updated: 2026-08-05
+Last updated: 2026-08-06
 
 ## Summary
 
 | | Status |
 |---|---|
-| Foundation (`packages/core-py`) | ✅ Complete · 67 tests |
-| Auth service | ✅ Complete · 115 tests |
-| API gateway | ✅ Complete · 39 tests |
-| Book service | ✅ Complete · 54 tests · 68 endpoints |
-| Payment service | ✅ Complete · 156 tests · 42 endpoints |
-| Search service | ✅ Complete · 96 tests · 15 endpoints |
-| Notification service | ✅ Complete · 69 tests · 28 endpoints |
-| AI service | ✅ Complete · 55 tests · 15 endpoints |
-| Automation service | ✅ Complete · 130 tests · 17 endpoints |
-| Workers service | ✅ Complete · 46 tests · 7 endpoints |
-| Admin service | ✅ Complete · 57 tests · 11 endpoints |
-| Frontend | 🟡 `types` + `config` packages only |
+| Foundation (`packages/core-py`) | ✅ Complete · 69 tests |
+| Auth service | ✅ Complete · 115 tests · **deployed** |
+| API gateway | ✅ Complete · 39 tests · **deployed** |
+| Book service | ✅ Complete · 57 tests · **deployed** |
+| Payment service | ✅ Complete · 158 tests · **deployed** |
+| Search service | ✅ Complete · 96 tests · **deployed** |
+| Notification service | ✅ Complete · 73 tests · **deployed** |
+| AI service | ✅ Complete · 55 tests · **deployed** |
+| Workers service | ✅ Complete · 46 tests · **deployed** |
+| Admin service | ✅ Complete · 57 tests · **deployed** |
+| Automation service | ✅ Complete · 130 tests · ⬜ **not deployed** (out of scope) |
+| Frontend | 🟡 Scaffolded outside this repo, still on mocks |
 | Infrastructure, CI, docs | ✅ Complete |
 
-**884 tests passing.** Ruff clean across everything committed.
+**893 tests passing.** Ruff clean across everything committed.
+
+## Deployed and verified — 2026-08-06
+
+The platform is live on Railway (project `knowledgeos`) and the whole commerce path
+has been driven through the public gateway end to end. **27 of 27 checks passed**,
+against the real system with no stubs:
+
+| | |
+|---|---|
+| Gateway | `https://gateway-production-c3e0.up.railway.app` |
+| Aggregated OpenAPI | 185 paths · 220 operations · 256 schemas |
+| Database | 67 tables across 8 schemas, all migrations applied |
+| Object storage | MinIO over HTTPS, presigned upload and download |
+| Search | Meilisearch — a new book is searchable ~3s after publication |
+| Events | entitlement granted ~2s after settlement |
+
+What that run actually proves, in order: an operator creates a book, is **refused
+permission to publish it until a file exists**, uploads a real EPUB straight to
+object storage through a presigned target, attaches it, publishes; the book appears
+in the public catalogue and in search; a customer wishlists it, is **refused the
+download with a 402**, gets a GST-correct quote, places an order; an operator
+settles it; the entitlement arrives over the event bus; the download URL is minted
+and **returns the exact bytes that were uploaded**; the book is in the customer's
+library, reading position syncs, and a GST invoice is issued and visible to both the
+customer and the operator.
+
+### Found by deploying, not by reading
+
+Seven defects that every test suite passed over, because each one lived in the gap
+between a component and the thing it talks to:
+
+1. **CI had not run a single test since the script was last touched.**
+   `scripts/test-python.sh` invoked `"$ROOT/${PYTHON}"` — the repo root joined to a
+   bare interpreter name. Every suite died before collection and CI was red on each
+   code push.
+2. **`apps/payment/railway.json` built the notification service's Dockerfile**, so
+   deploying payment would have run notifications under payment's name and variables.
+3. **The aggregated OpenAPI was permanently empty in production.** `docs_enabled`
+   gated `/docs`, `/redoc` *and* `/openapi.json` together, and the gateway builds its
+   aggregate by fetching that last path from every upstream.
+4. **`POST /v1/wishlist` and `GET /v1/wishlist` were both 500s** — the first called
+   the service with the wrong keyword, the second omitted required fields when
+   serialising. The listing looked healthy while the wishlist was empty.
+5. **`GET /v1/admin/invoices` was a 500 on every call.** `Annotated[…] = ...` makes
+   Ellipsis the default rather than marking a parameter required.
+6. **Downloading an EPUB-only book 404'd for a paying customer**, because `format`
+   defaulted to `pdf`.
+7. **Every outbound email would have bounced.** No `Message-ID` header, which Gmail
+   rejects outright rather than filtering.
+
+Each is fixed, and each now has the test that would have caught it.
+
+### Not deployed, deliberately
+
+- **Automation service.** Out of scope for this phase. `/v1/automation/*` returns
+  502 and the gateway reports `upstream:automation` down; that is expected, not an
+  outage.
+- **Razorpay and Stripe.** No credentials. Orders, pricing, GST, coupons, invoicing
+  and refunds all work; only the hosted card page is missing. `mark-paid` settles an
+  order and every downstream effect fires as it would after a real capture. The
+  webhook handlers treat a missing signing secret as *refuse the delivery*, so this
+  is a safe state rather than an unfinished one.
+
+### Known limitation
+
+**Email is queued but undeliverable to major providers.** SMTP authenticates and
+postfix delivers to Gmail, which then rejects on `550-5.7.26` — no SPF or DKIM. Both
+are DNS records on the sending domain, and mail currently leaves as
+`@srv1628639.hstgr.cloud`, whose DNS is not ours. Fix by setting
+`EMAIL_PROVIDER=resend` with an API key (already implemented, no code change), or by
+sending from a domain you control with SPF and DKIM published. In-app notifications
+are unaffected.
 
 Every figure on this page is read off a real run of `scripts/test-python.sh`, not
 carried forward from a previous revision. Several were wrong for exactly that reason —
@@ -331,10 +403,16 @@ Being precise about this matters more than a green checkmark.
   token that verifies
 - `docker compose config` parses
 
-**Not verified — no environment available in the build sandbox:**
-- **Docker images have never been built.** There is no Docker daemon here. The
-  Dockerfiles follow a single reviewed pattern but are unexercised. CI builds them on
-  the first push.
+**Now verified against the deployed platform (2026-08-06):**
+- **Docker images build and run.** Every service image is built by CI and deployed.
+- **Migrations applied to real PostgreSQL** — 67 tables across 8 schemas.
+- **Live Redis, MinIO and Meilisearch**, all reachable from the services that need
+  them.
+- **End-to-end across services**: the 27-check commerce run described above.
+
+**Previously listed as unverified, and why it mattered:**
+- **Docker images had never been built.** There was no Docker daemon in the build
+  sandbox. The Dockerfiles followed a single reviewed pattern but were unexercised.
 - **No live Postgres, Redis, MinIO or Meilisearch.** Test suites run on in-memory
   SQLite and `fakeredis` by design, so migrations are verified against SQLite rather
   than PostgreSQL. Run `alembic upgrade head` against a real Postgres before

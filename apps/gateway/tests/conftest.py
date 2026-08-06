@@ -85,6 +85,21 @@ def upstream_handler(upstream_log):
                     "components": {"schemas": {}},
                 },
             )
+        if request.url.path == "/v1/auth/login":
+            # The real auth service sets two cookies here, which is the case that
+            # exposed the gateway folding repeated response headers.
+            return httpx.Response(
+                200,
+                json={"access_token": "token", "csrf_token": "csrf"},
+                headers=[
+                    (b"content-type", b"application/json"),
+                    (
+                        b"set-cookie",
+                        b"kos_refresh=r1; HttpOnly; Secure; SameSite=strict; Path=/v1/auth",
+                    ),
+                    (b"set-cookie", b"kos_csrf=c1; Secure; SameSite=strict; Path=/v1/auth"),
+                ],
+            )
         return httpx.Response(
             200,
             json={"upstream": request.url.host, "path": request.url.path},

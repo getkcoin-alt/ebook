@@ -16,7 +16,7 @@ from typing import Any
 from cache import ResponseCache, auth_scope, build_key
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from proxy import Proxy, UpstreamPool, to_response
+from proxy import Proxy, UpstreamPool, set_response_header, to_response
 from routes import invalidation_events, resolve, upstream_names
 
 from knowledgeos_core import (
@@ -244,14 +244,17 @@ async def gateway(request: Request, full_path: str, ctx: Ctx) -> Response:
         body=body,
     )
 
-    result.headers.update({k.lower(): v for k, v in rate_headers.items()})
-    result.headers["x-cache"] = "MISS" if cache_key else "BYPASS"
+    for name, value in rate_headers.items():
+        set_response_header(result.headers, name, value)
+    set_response_header(result.headers, "x-cache", "MISS" if cache_key else "BYPASS")
 
     if cache_key is not None and result.cacheable_body is not None:
         await cache.store(  # type: ignore[union-attr]
             cache_key,
             status_code=result.status_code,
-            headers=result.headers,
+            # A mapping is fine here: the cache refuses any response carrying a
+            # `Set-Cookie`, which is the only header the proxy keeps repeated.
+            headers=dict(result.headers),
             body=result.cacheable_body,
             ttl=route.cache_ttl,
         )

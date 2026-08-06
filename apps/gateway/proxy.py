@@ -61,11 +61,23 @@ _DROP_FROM_RESPONSE = HOP_BY_HOP | {"content-encoding", "content-length"}
 #: Headers the gateway sets itself; an upstream must not be able to spoof them.
 _UPSTREAM_MUST_NOT_SET = {"x-authenticated-user", "x-authenticated-roles"}
 
+#: Response headers that may legitimately appear more than once and must not be
+#: folded into a single comma-joined value.
+#:
+#: `Set-Cookie` is the one that matters. RFC 6265 forbids folding it, and browsers
+#: parse a folded value as a single cookie — so an upstream setting two cookies
+#: would have the second silently dropped. The auth service sets exactly two on
+#: login (`kos_refresh` and `kos_csrf`), and losing the CSRF one means a session
+#: cannot be refreshed after a page reload.
+_MULTI_VALUE_RESPONSE_HEADERS = {"set-cookie"}
+
 
 @dataclass(slots=True)
 class ProxyResult:
     status_code: int
-    headers: dict[str, str]
+    #: A list rather than a mapping, so a repeated header survives the proxy. See
+    #: `_MULTI_VALUE_RESPONSE_HEADERS`.
+    headers: list[tuple[str, str]]
     body: bytes | None
     #: Set for streamed responses; the caller must consume it.
     stream: AsyncIterator[bytes] | None = None
@@ -161,14 +173,30 @@ def build_forward_headers(
     return headers
 
 
-def build_response_headers(upstream_response: httpx.Response, *, request_id: str) -> dict[str, str]:
-    headers = {
-        key.lower(): value
-        for key, value in upstream_response.headers.items()
+def build_response_headers(
+    upstream_response: httpx.Response, *, request_id: str
+) -> list[tuple[str, str]]:
+    """Copy the upstream's response headers, preserving repeats.
+
+    `multi_items()` rather than `items()`: httpx joins duplicate headers with a
+    comma in `items()`, and collecting the result into a dict then collapses them
+    for good. For `Set-Cookie` both steps are wrong — see
+    `_MULTI_VALUE_RESPONSE_HEADERS`.
+    """
+    headers = [
+        (key.lower(), value)
+        for key, value in upstream_response.headers.multi_items()
         if key.lower() not in _DROP_FROM_RESPONSE
-    }
-    headers["x-request-id"] = request_id
+    ]
+    headers.append(("x-request-id", request_id))
     return headers
+
+
+def set_response_header(headers: list[tuple[str, str]], key: str, value: str) -> None:
+    """Set a single-valued header in place, replacing any existing entries."""
+    lowered = key.lower()
+    headers[:] = [(k, v) for k, v in headers if k != lowered]
+    headers.append((lowered, value))
 
 
 class Proxy:
@@ -283,15 +311,30 @@ async def _stream_and_close(response: httpx.Response) -> AsyncIterator[bytes]:
 
 
 def to_response(result: ProxyResult) -> Response:
+    # Starlette takes a mapping, which cannot express a repeated header, so the
+    # ones that may repeat are appended to `raw_headers` afterwards.
+    single: dict[str, str] = {}
+    repeated: list[tuple[str, str]] = []
+    for key, value in result.headers:
+        if key in _MULTI_VALUE_RESPONSE_HEADERS:
+            repeated.append((key, value))
+        else:
+            single[key] = value
+
     if result.stream is not None:
-        return StreamingResponse(
-            result.stream, status_code=result.status_code, headers=result.headers
+        response: Response = StreamingResponse(
+            result.stream, status_code=result.status_code, headers=single
         )
-    return Response(
-        content=result.body,
-        status_code=result.status_code,
-        headers=result.headers,
-        # Content-Type is already in the forwarded headers; setting it again here
-        # would produce a duplicate.
-        media_type=None,
-    )
+    else:
+        response = Response(
+            content=result.body,
+            status_code=result.status_code,
+            headers=single,
+            # Content-Type is already in the forwarded headers; setting it again
+            # here would produce a duplicate.
+            media_type=None,
+        )
+
+    for key, value in repeated:
+        response.raw_headers.append((key.encode("latin-1"), value.encode("latin-1")))
+    return response

@@ -77,6 +77,29 @@ class TestRouting:
 
 
 class TestHeaderHygiene:
+    async def test_repeated_set_cookie_headers_survive_the_proxy(self, client):
+        """Two cookies in, two cookies out.
+
+        httpx joins duplicate headers with a comma in `items()`, and the proxy then
+        collected them into a dict, so both steps flattened the auth service's two
+        `Set-Cookie` headers into one value. RFC 6265 forbids folding `Set-Cookie`
+        and browsers parse a folded value as a single cookie, so `kos_csrf` was
+        silently dropped — which meant a session could not be refreshed after a page
+        reload, because the client had no CSRF token to echo back.
+        """
+        response = await client.post("/v1/auth/login", json={})
+
+        cookies = [
+            value.decode()
+            for key, value in response.headers.raw
+            if key.decode().lower() == "set-cookie"
+        ]
+        assert len(cookies) == 2, cookies
+        assert any(c.startswith("kos_refresh=") for c in cookies)
+        assert any(c.startswith("kos_csrf=") for c in cookies)
+        # Each must still carry its own attributes rather than one merged string.
+        assert all("Path=/v1/auth" in c for c in cookies)
+
     async def test_hop_by_hop_headers_are_stripped(self, client, upstream_log):
         # Forwarding these produces framing bugs that look like random truncation.
         await client.get(

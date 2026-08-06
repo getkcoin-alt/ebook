@@ -16,6 +16,7 @@ returned.
 | **Auth** | `Authorization: Bearer <access token>` (RS256 JWT) |
 | **Content type** | `application/json` throughout, except presigned uploads |
 | **Not deployed** | The automation service. Every `/v1/automation/*` path returns 503. |
+| **Account emails** | Verification and reset links point at `{frontend}/verify-email?token=…` and `/reset-password?token=…` |
 | **Not configured** | Razorpay and Stripe credentials. See [Payments](#payments). |
 
 Nothing below is aspirational. Where a capability is present but unconfigured, it
@@ -72,11 +73,23 @@ Content-Type: application/json
 ```json
 {
   "access_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImI3M2NhYTg4…",
-  "refresh_token": "…",
-  "token_type": "bearer",
-  "expires_in": 900
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "refresh_token": null,
+  "csrf_token": "Y7hJ8mGm1yjDuKOmeG4BETF-…",
+  "user": {"id": "…", "email": "…", "roles": ["user"], "permissions": ["books:read", "ai:use"], …}
 }
 ```
+
+`refresh_token` is `null` for browser clients on purpose — the real one is an
+httpOnly cookie, so an XSS cannot read it. The `user` object comes back with the
+login, so there is no need to follow up with `GET /v1/auth/me`.
+
+> **`POST /v1/auth/register` does not sign anyone in.** It answers
+> `{"message": "Check your inbox — we've sent a link to confirm your email
+> address.", "success": true}` and nothing else. There is no token in that
+> response; treating it as a login stores `undefined` and leaves the app looking
+> signed in while every request goes out unauthenticated.
 
 Send it on every subsequent call:
 
@@ -120,10 +133,30 @@ POST /v1/auth/refresh
 > and third-party cookie restrictions will break it again later. Keeping the API on a
 > subdomain is the cheaper answer.
 
-**Two-factor** is TOTP, enrolled at `POST /v1/auth/mfa/enroll` and confirmed at
-`/mfa/confirm`. When a user has it enabled, `POST /v1/auth/login` does not return
-tokens — it returns an MFA challenge, and the client completes the exchange at
-`POST /v1/auth/login/mfa`.
+**Two-factor** is TOTP. Enrol at `POST /v1/auth/mfa/enroll`, which returns
+`{secret, provisioning_uri}` — render the URI as a QR code and offer the secret for
+manual entry. Confirm with the first code at `POST /v1/auth/mfa/confirm`, which
+returns the recovery codes **once**; they are stored hashed and cannot be shown
+again.
+
+When a user has it enabled, `POST /v1/auth/login` does not return tokens:
+
+```json
+{"mfa_required": true, "challenge_token": "eyJhbGciOiJSUzI1NiIs…",
+ "expires_in": 300, "methods": ["totp", "recovery_code"]}
+```
+
+Complete it at `POST /v1/auth/login/mfa` with `{challenge_token, code}`. The
+challenge token is a **signed JWT of roughly 700 characters**, not a short opaque
+string — do not truncate it or store it in something narrow.
+
+`GET /v1/auth/mfa/status` answers `{enabled, recovery_codes_remaining}`. The field
+is `enabled`; `mfa_enabled` is the separate flag on the user object.
+
+A TOTP code is single-use within its 30-second step: the service records the
+highest step it has accepted, so a code consumed by `/mfa/confirm` cannot be
+replayed at `/login/mfa` moments later. Wait for the next code rather than reusing
+the one on screen.
 
 **Roles** are `user`, `moderator`, `admin` and `superadmin`. `GET
 /v1/auth/permissions` returns the exact permission set each role grants, so an

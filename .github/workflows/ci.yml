@@ -16,7 +16,6 @@ concurrency:
 env:
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "22"
-  PNPM_VERSION: "10"
 
 permissions:
   contents: read
@@ -158,9 +157,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No `version:` input. `package.json` sets `packageManager: pnpm@10.33.0`,
+      # and pnpm/action-setup@v4 refuses to run when both are present:
+      #   Error: Multiple versions of pnpm specified
+      # The lockfile is written by whatever `packageManager` names, so that field is
+      # the one that has to win.
       - uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -180,9 +182,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No `version:` input. `package.json` sets `packageManager: pnpm@10.33.0`,
+      # and pnpm/action-setup@v4 refuses to run when both are present:
+      #   Error: Multiple versions of pnpm specified
+      # The lockfile is written by whatever `packageManager` names, so that field is
+      # the one that has to win.
       - uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}

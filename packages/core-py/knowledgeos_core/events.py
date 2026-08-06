@@ -248,11 +248,15 @@ class EventConsumer:
                 # forever. Operators replay from the dead stream after a fix.
                 await self._redis.xadd(
                     DEAD_LETTER_STREAM,
+                    # redis-py types the field mapping as str-or-bytes keyed, but
+                    # declares the value union without `bytes` on the key side, so a
+                    # wholly-bytes mapping — which is what the wire format is — does
+                    # not satisfy it. The runtime accepts it; the annotation is wrong.
                     {
-                        **event.to_fields(),
+                        **event.to_fields(),  # type: ignore[dict-item]
                         b"error": str(exc).encode()[:2000],
                         b"group": self._group.encode(),
-                    },  # type: ignore[arg-type]
+                    },
                     maxlen=50_000,
                     approximate=True,
                 )

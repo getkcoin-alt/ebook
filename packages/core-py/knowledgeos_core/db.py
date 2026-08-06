@@ -55,7 +55,13 @@ class Base(DeclarativeBase):
     # RETURNING, so this costs nothing.
     # ClassVar so ruff does not read this as a dataclass-style mutable default; it is
     # SQLAlchemy configuration, and subclasses that override it replace it wholesale.
-    __mapper_args__: ClassVar[dict[str, Any]] = {"eager_defaults": True}
+    # `ClassVar` and mypy disagree here and cannot both be satisfied: ruff reads a
+    # bare dict as a mutable class default (RUF012) and wants the annotation, while
+    # `DeclarativeBase` declares `__mapper_args__` as an instance variable, so
+    # narrowing it to a ClassVar is an illegal override. The annotation is the more
+    # accurate of the two — this is configuration read off the class, never per
+    # instance — so it stays and the override check is silenced.
+    __mapper_args__: ClassVar[dict[str, Any]] = {"eager_defaults": True}  # type: ignore[misc]
 
 
 #: Dialect-agnostic UUID column type.

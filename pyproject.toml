@@ -72,6 +72,19 @@ exclude = ["migrations/versions", "node_modules", ".venv"]
 module = ["tests.*", "*.tests.*"]
 disallow_untyped_defs = false
 
+# Third-party packages that ship no annotations and no `py.typed` marker. Named
+# individually rather than setting `ignore_missing_imports` globally: an import
+# that fails because the dependency is genuinely absent should still be an error.
+[[tool.mypy.overrides]]
+module = [
+    "boto3.*",
+    "botocore.*",
+    "celery.*",
+    "jose.*",
+    "kombu.*",
+]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # No `testpaths`. Running pytest from the repository root cannot collect this

@@ -185,7 +185,7 @@ def get_registry() -> CollectorRegistry:
         registry = CollectorRegistry()
         multiprocess.MultiProcessCollector(registry)
         return registry
-    return DEFAULT_REGISTRY  # type: ignore[return-value]
+    return DEFAULT_REGISTRY
 
 
 def render_metrics() -> bytes:

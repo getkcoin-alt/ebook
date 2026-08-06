@@ -120,6 +120,31 @@ objects, not a list of ids:
 returns the book; `GET /v1/books/{book_id}/access` and
 `GET /v1/books/{book_id}/download` take the UUID. Do not send a slug to either.
 
+**The access response field is `has_access`, not `can_read`.**
+
+```json
+{"book_id": "…", "has_access": true, "can_download": true,
+ "source": "purchase", "expires_at": null}
+```
+
+`can_download` is separately false for a subscription entitlement, so a Read button
+and a Download button ask different questions of the same response.
+
+**`POST /v1/orders` returns a `CheckoutSession`, not an order.** The order id is
+`response.order.id`. `checkout_url` and `client_secret` are `null` here because no
+gateway is configured, and `provider` is `"manual"`.
+
+**Listed prices are GST-inclusive.** In a quote, `total_minor` equals
+`subtotal_minor` — ₹499.00 is what the customer pays, of which ₹76.12 is tax.
+**Never add `tax.total_minor` to `total_minor`**; that charges the tax twice. Show
+`total_minor` as the price and the `tax` object as a breakdown underneath. Each
+quote line also carries `already_owned`, which is how you stop someone re-buying a
+book they have.
+
+**Download takes an optional `?format=`.** Omit it and the book's preferred
+available format is served. Only send one when the user picked it from
+`available_formats`.
+
 **Publishing requires an uploaded file.** The sequence is: create (draft) →
 `POST /v1/admin/books/uploads` for a presigned target → `POST` the file to that URL
 as multipart form data with the returned `fields` → record it with
@@ -200,6 +225,12 @@ Render preference toggles **only for the channels in that array**. SMS, WhatsApp
 push are not configured; offering those switches promises something that cannot be
 delivered.
 
+Be aware that **email is queued but does not currently reach Gmail** — the sending
+domain has no SPF or DKIM records. Do not build a flow whose only success path is
+"check your inbox". Verification and password reset must both work from a link an
+operator can retrieve, and the in-app inbox is the channel that actually delivers
+today.
+
 **`GET /v1/ai/status`** reports whether AI is usable *right now*. There is a hard
 daily cost ceiling ($10 platform-wide, $1 per user) and reaching it returns `503`.
 Call `status` before rendering any AI affordance. A chat button that 503s is worse
@@ -222,7 +253,7 @@ be `unavailable` here — that is correct, and the card should say so plainly.
 
 **`GET /v1/plans` is empty** until an operator creates plans at
 `/v1/admin/plans`. The subscriptions area should show an empty state, not a skeleton
-that never resolves.
+that never resolves. The same is true of coupons.
 
 ### Phase 4 — Errors, permissions, states
 

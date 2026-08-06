@@ -148,6 +148,67 @@ class TestRefreshEndpoint:
         assert response.status_code == 401
 
 
+class TestMfaEnrolmentOverHttp:
+    """The enrolment routes, driven through HTTP rather than the service.
+
+    Every one of these was a 500 in production while the service-level tests passed.
+    The auth service is built with `Components(auth=False)` — it verifies its own
+    tokens against the local key ring — and core's rate-limit dependency resolves
+    the caller through `get_optional_principal` to decide whether to key the bucket
+    by user or by IP. With no verifier that raised `RuntimeError`, but only when a
+    bearer token was actually present, so sign-in looked healthy and two-factor
+    could never be turned on by anyone.
+    """
+
+    async def test_enrolment_can_be_started(self, client):
+        login = await _register_and_login(client)
+        token = login.json()["access_token"]
+        response = await client.post(
+            "/v1/auth/mfa/enroll", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert len(body["secret"]) >= 16
+        assert body["provisioning_uri"].startswith("otpauth://totp/")
+
+    async def test_enrolment_completes_and_returns_recovery_codes(self, client):
+        import pyotp
+
+        login = await _register_and_login(client)
+        token = login.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        secret = (await client.post("/v1/auth/mfa/enroll", headers=headers)).json()["secret"]
+        confirm = await client.post(
+            "/v1/auth/mfa/confirm",
+            headers=headers,
+            json={"code": pyotp.TOTP(secret).now()},
+        )
+        assert confirm.status_code == 200, confirm.text
+        assert confirm.json()["enabled"] is True
+        # Shown exactly once; only hashes are kept.
+        assert len(confirm.json()["recovery_codes"]) > 0
+
+        status = await client.get("/v1/auth/mfa/status", headers=headers)
+        assert status.status_code == 200
+        assert status.json()["enabled"] is True
+
+    async def test_recovery_codes_can_be_regenerated(self, client):
+        import pyotp
+
+        login = await _register_and_login(client)
+        token = login.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        secret = (await client.post("/v1/auth/mfa/enroll", headers=headers)).json()["secret"]
+        await client.post(
+            "/v1/auth/mfa/confirm", headers=headers, json={"code": pyotp.TOTP(secret).now()}
+        )
+
+        response = await client.post("/v1/auth/mfa/recovery-codes", headers=headers)
+        assert response.status_code == 200, response.text
+        assert len(response.json()["recovery_codes"]) > 0
+
+
 class TestAuthenticatedEndpoints:
     async def test_me_requires_a_token(self, client):
         response = await client.get("/v1/auth/me")

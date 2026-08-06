@@ -211,3 +211,54 @@ class TestBodyLimit:
             response = await tiny_client.post("/v1/echo", json={"k": "v" * 500})
             assert response.status_code == 413
             assert response.json()["error"]["code"] == "payload_too_large"
+
+
+class TestOptionalPrincipalWithoutAVerifier:
+    """A service built without `Components(auth=True)` has no way to verify a token.
+
+    `get_current_principal` must still fail loudly — a route that *requires* a
+    principal in such a service is a wiring mistake. `get_optional_principal` must
+    not, because "optional" already means anonymous is acceptable, and the caller
+    simply cannot be identified.
+
+    This is not hypothetical. The auth service is built with `auth=False` (it
+    verifies its own tokens against the local key ring rather than fetching JWKS
+    from itself), and core's rate-limit dependency resolves the caller through
+    `get_optional_principal` to choose between a per-user and a per-IP bucket. The
+    RuntimeError only fired when a bearer token was present, so anonymous routes
+    like login were fine while every authenticated MFA route returned 500 — nobody
+    could turn two-factor on.
+    """
+
+    @staticmethod
+    def _credentials(token: str = "any.jwt.value"):
+        from fastapi.security import HTTPAuthorizationCredentials
+
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+    @staticmethod
+    def _ctx_without_verifier():
+        from knowledgeos_core.app import AppContext
+
+        ctx = AppContext.__new__(AppContext)
+        ctx.verifier = None
+        return ctx
+
+    async def test_optional_principal_is_anonymous_rather_than_an_error(self):
+        from knowledgeos_core.deps import get_optional_principal
+
+        principal = await get_optional_principal(
+            self._ctx_without_verifier(), self._credentials()
+        )
+        assert principal is None
+
+    async def test_required_principal_still_raises_loudly(self):
+        from knowledgeos_core.deps import get_current_principal
+
+        with pytest.raises(RuntimeError, match="Components\\(auth=True\\)"):
+            await get_current_principal(self._ctx_without_verifier(), self._credentials())
+
+    async def test_a_missing_token_is_still_anonymous(self):
+        from knowledgeos_core.deps import get_optional_principal
+
+        assert await get_optional_principal(self._ctx_without_verifier(), None) is None

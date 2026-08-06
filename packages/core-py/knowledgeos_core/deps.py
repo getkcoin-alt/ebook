@@ -107,6 +107,26 @@ async def get_optional_principal(
     """
     if credentials is None or not credentials.credentials:
         return None
+    if ctx.verifier is None:
+        # This service has no way to verify a token, so it cannot identify anyone —
+        # which is exactly what "optional" already tolerates. Returning None keeps
+        # the caller anonymous instead of raising.
+        #
+        # The auth service is the case that matters: it is built with
+        # `auth=False` because it verifies its own tokens against the in-process
+        # key ring rather than fetching JWKS from itself. Every route of its own
+        # that carried a `rate_limit` dependency therefore raised RuntimeError the
+        # moment it was called *with* a bearer token, because the limiter resolves
+        # the caller through here to decide whether to key the bucket by user or by
+        # IP. Anonymous calls (login, register) returned early and were unaffected,
+        # so the whole of MFA enrolment 500'd while sign-in looked healthy.
+        #
+        # `get_current_principal` deliberately still raises: a route that *requires*
+        # a principal in a service with no verifier is a wiring mistake worth
+        # failing loudly on. Falling back to anonymous here only ever makes a rate
+        # limit stricter — an IP bucket rather than a user bucket — so it cannot
+        # widen access.
+        return None
     try:
         return await get_current_principal(ctx, credentials)
     except UnauthorizedError:

@@ -247,9 +247,7 @@ class TestOptionalPrincipalWithoutAVerifier:
     async def test_optional_principal_is_anonymous_rather_than_an_error(self):
         from knowledgeos_core.deps import get_optional_principal
 
-        principal = await get_optional_principal(
-            self._ctx_without_verifier(), self._credentials()
-        )
+        principal = await get_optional_principal(self._ctx_without_verifier(), self._credentials())
         assert principal is None
 
     async def test_required_principal_still_raises_loudly(self):

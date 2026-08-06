@@ -97,7 +97,13 @@ class LoginRequest(BaseSchema):
 class MfaChallengeRequest(BaseSchema):
     """Second step of a login that requires TOTP."""
 
-    challenge_token: str = Field(min_length=16, max_length=512)
+    #: An RS256 JWT, not an opaque string like the reset and verification tokens.
+    #: At a 2048-bit key it is around 700 characters and at 4096 bits around 1050,
+    #: so the previous 512 cap rejected every genuine challenge before the handler
+    #: ran — two-factor sign-in could not complete at all. The bound stays, because
+    #: an unbounded body is a cheap way to make the server do pointless work; it is
+    #: now simply above what a real token can be.
+    challenge_token: str = Field(min_length=16, max_length=4096)
     code: str = Field(min_length=6, max_length=32, description="TOTP code or recovery code.")
 
 

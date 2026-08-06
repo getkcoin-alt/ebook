@@ -209,6 +209,59 @@ class TestMfaEnrolmentOverHttp:
         assert len(response.json()["recovery_codes"]) > 0
 
 
+class TestTwoFactorSignIn:
+    """The second leg of a two-factor login, end to end.
+
+    Nothing exercised `/v1/auth/login/mfa` with a real challenge token, so the fact
+    that its schema capped `challenge_token` at 512 characters went unnoticed — an
+    RS256 JWT is about 700. Every genuine attempt was rejected by body validation
+    before the handler ran, so a user who enrolled could never sign in again.
+    """
+
+    async def test_a_real_challenge_token_is_accepted(self, client):
+        import pyotp
+
+        login = await _register_and_login(client)
+        token = login.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        secret = (await client.post("/v1/auth/mfa/enroll", headers=headers)).json()["secret"]
+        totp = pyotp.TOTP(secret)
+        await client.post("/v1/auth/mfa/confirm", headers=headers, json={"code": totp.now()})
+
+        challenge = await client.post(
+            "/v1/auth/login",
+            json={"email": REGISTRATION["email"], "password": REGISTRATION["password"]},
+        )
+        assert challenge.status_code == 200
+        body = challenge.json()
+        assert body["mfa_required"] is True
+
+        # The assertion that matters: a token of the length the service actually
+        # mints must survive validation.
+        assert len(body["challenge_token"]) > 512, (
+            "a challenge token is a signed JWT and comfortably exceeds 512 characters; "
+            "this test exists because the schema once capped it there"
+        )
+
+        completed = await client.post(
+            "/v1/auth/login/mfa",
+            json={"challenge_token": body["challenge_token"], "code": totp.now()},
+        )
+        # Either it signs in, or the code was refused as a replay of the one used to
+        # confirm — both prove the body was accepted, which is what regressed.
+        assert completed.status_code != 422, completed.text
+
+    async def test_an_absurdly_long_challenge_token_is_still_refused(self, client):
+        # The cap was raised, not removed: an unbounded body is a cheap way to make
+        # the server do pointless work.
+        response = await client.post(
+            "/v1/auth/login/mfa",
+            json={"challenge_token": "x" * 5000, "code": "123456"},
+        )
+        assert response.status_code == 422
+
+
 class TestAuthenticatedEndpoints:
     async def test_me_requires_a_token(self, client):
         response = await client.get("/v1/auth/me")

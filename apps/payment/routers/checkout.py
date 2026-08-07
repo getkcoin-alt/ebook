@@ -301,13 +301,14 @@ async def create_order(
 
     # A zero-value order has no gateway step. Settling it here means a free book
     # grants access through exactly the same path as a paid one.
-    if order.total_minor == 0:
+    # Additionally, we auto-settle MANUAL orders for now to bypass payment integration.
+    if order.total_minor == 0 or order.provider == PaymentProvider.MANUAL:
         result = await ctx.extras["payments"].settle(
             session,
             order=order,
             provider=PaymentProvider.MANUAL,
             provider_payment_id=f"free_{order.id}",
-            amount_minor=0,
+            amount_minor=order.total_minor,
         )
         await session.commit()
         await ctx.extras["payments"].announce_paid(ctx.publisher, result)

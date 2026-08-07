@@ -14,7 +14,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, status
 
-from deps import Budget, Chat, CurrentUser, DbSession, Generate, PageLimit, Providers, user_uuid
+from deps import Budget, Chat, CurrentUser, DbSession, Generate, OptionalUser, PageLimit, Providers, user_uuid
 from knowledgeos_core import ListResponse, get_logger
 from knowledgeos_core.deps import rate_limit
 from schemas import (
@@ -49,18 +49,20 @@ AI_LIMIT = Depends(rate_limit("ai"))
     ),
 )
 async def ai_status(
-    session: DbSession, providers: Providers, budget: Budget, principal: CurrentUser
+    session: DbSession, providers: Providers, budget: Budget, principal: OptionalUser = None
 ) -> AiStatus:
-    state = await budget.state(session, user_id=user_uuid(principal))
+    user_id = user_uuid(principal) if principal is not None else None
+    state = await budget.state(session, user_id=user_id) if user_id else None
     primary = providers.primary
     return AiStatus(
-        available=bool(providers.available) and not state.exhausted,
+        available=bool(providers.available) and (not state or not state.exhausted),
         providers=providers.available,
         model=primary.model if primary else None,
-        budget_remaining_usd=round(state.remaining_usd, 4),
+        budget_remaining_usd=round(state.remaining_usd, 4) if state else 0.0,
         cache_enabled=settings.cache_enabled,
         moderation_enabled=settings.moderation_enabled,
     )
+
 
 
 # ---------------------------------------------------------------------------

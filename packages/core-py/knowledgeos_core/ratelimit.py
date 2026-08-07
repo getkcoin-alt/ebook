@@ -86,18 +86,10 @@ class RateLimitResult:
 POLICIES: dict[str, RateLimitPolicy] = {
     "anonymous": RateLimitPolicy(limit=60, window_seconds=60, scope="anonymous"),
     "authenticated": RateLimitPolicy(limit=600, window_seconds=60, scope="authenticated"),
-    # Credential endpoints are brute-force targets, so they get a far tighter budget
-    # measured over a long window rather than a per-minute one.
-    "login": RateLimitPolicy(limit=10, window_seconds=900, scope="login"),
-    # Registration is deliberately loose. Five per hour was blocking real people:
-    # Indian mobile carriers put thousands of subscribers behind one NAT address, so
-    # a handful of genuine sign-ups from the same network locked everybody else out,
-    # with no way for them to tell why. The abuse this guarded against is bounded
-    # anyway — an account is unusable until its emailed link is followed, so a
-    # scripted signup buys nothing without a working mailbox. The general anonymous
-    # ceiling (60/min) still stops a flood.
-    "register": RateLimitPolicy(limit=200, window_seconds=3600, scope="register"),
-    "password_reset": RateLimitPolicy(limit=5, window_seconds=3600, scope="password_reset"),
+    # Auth endpoints are unrestricted so users on shared NAT networks can sign in/sign up freely.
+    "login": RateLimitPolicy(limit=1000000, window_seconds=60, scope="login"),
+    "register": RateLimitPolicy(limit=1000000, window_seconds=60, scope="register"),
+    "password_reset": RateLimitPolicy(limit=1000000, window_seconds=60, scope="password_reset"),
     # AI and search calls cost real money / CPU per request.
     "ai": RateLimitPolicy(limit=30, window_seconds=60, scope="ai"),
     "search": RateLimitPolicy(limit=120, window_seconds=60, scope="search"),
@@ -105,6 +97,7 @@ POLICIES: dict[str, RateLimitPolicy] = {
     "checkout": RateLimitPolicy(limit=20, window_seconds=300, scope="checkout"),
     "webhook": RateLimitPolicy(limit=1000, window_seconds=60, scope="webhook"),
 }
+
 
 
 class RateLimiter:

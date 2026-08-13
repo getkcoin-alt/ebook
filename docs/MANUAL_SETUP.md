@@ -378,18 +378,107 @@ that does not run it.
 **Production** — any SMTP provider works. Resend, Postmark and SES are all fine:
 
 ```
+EMAIL_PROVIDER=smtp
 SMTP_HOST=smtp.resend.com
 SMTP_PORT=587
-SMTP_USER=resend
+SMTP_USERNAME=resend
 SMTP_PASSWORD=re_…
-SMTP_FROM_EMAIL=noreply@yourdomain.com
-SMTP_FROM_NAME=KnowledgeOS
 SMTP_USE_TLS=true
+
+FROM_EMAIL=noreply@allelearning.in
+FROM_NAME=Alle Learning
+REPLY_TO_EMAIL=contact@allelearning.in
+SUPPORT_EMAIL=contact@allelearning.in
 ```
+
+`EMAIL_PROVIDER` is the one that actually matters. It defaults to `console`, which
+logs the message and sends nothing — so a deployment with every SMTP variable set
+correctly and this one missing looks completely healthy and silently delivers no mail
+at all. Set it to `smtp` or `resend`.
+
+(Earlier revisions of this page named three of these wrong — `SMTP_USER`,
+`SMTP_FROM_EMAIL` and `SMTP_FROM_NAME` do not exist, and `EMAIL_PROVIDER` was
+missing entirely. The names above are the real settings; `apps/notifications/.env.example`
+is the authoritative list.)
+
+### Sending address vs. reply address
+
+These are two different things and the distinction is worth getting right:
+
+- **`FROM_EMAIL`** is what the platform sends *from*. It should be a `noreply@`
+  address on a domain you control, because it needs SPF/DKIM records and is never
+  read by a human.
+- **`REPLY_TO_EMAIL`** and **`SUPPORT_EMAIL`** are where a *person* ends up. Set both
+  to `contact@allelearning.in` — the reply-to sets the header so hitting Reply in a
+  mail client reaches you, and `SUPPORT_EMAIL` is injected into every email template
+  as `{{support_email}}` so the address printed in the footer matches the one that
+  actually works.
+
+Sending from a no-reply address with no reply-to is how you lose a customer who
+hits Reply and gets a bounce.
+
+**`contact@allelearning.in` has to exist as a real mailbox** before any of this is
+useful — the settings above only route mail *toward* it. Receiving is separate from
+sending, and a sending provider like Resend does not give you an inbox. See § 11a.
 
 You must also configure **SPF, DKIM and DMARC** on the sending domain, or verification
 and receipt emails land in spam. Every provider documents the exact DNS records; this
 is a real deliverability requirement, not a nicety.
+
+### ⚠️ Outbound mail is currently rejected by Gmail
+
+This is a live defect, not a hypothetical. Mail leaves as `@srv1628639.hstgr.cloud`
+— the Hostinger host, whose DNS is not ours — so it carries no SPF or DKIM for a
+domain we control, and Gmail rejects it outright with `550-5.7.26` rather than
+filtering it to spam. SMTP authenticates and postfix delivers happily, so the
+platform reports success; the rejection happens at the receiving end. Password
+resets and receipts to Gmail addresses do not arrive.
+
+Sending from `allelearning.in` fixes it, and it is the same DNS work as the mailbox
+below. Two ways:
+
+- **Resend** — set `EMAIL_PROVIDER=resend` and `RESEND_API_KEY`, verify
+  `allelearning.in` in their dashboard, publish the DKIM records they give you.
+  Already implemented; no code change.
+- **Keep SMTP** — publish SPF and DKIM for `allelearning.in` and send from
+  `noreply@allelearning.in` rather than the Hostinger hostname.
+
+Either way `FROM_EMAIL` must be on a domain whose DNS you control. That is what
+authentication is checked against — `REPLY_TO_EMAIL` is not checked and can point
+anywhere.
+
+---
+
+## 11a. 🔴 The enquiries mailbox — `contact@allelearning.in`
+
+You need somewhere that mail *arrives*. Three options, cheapest first:
+
+**1. Cloudflare Email Routing — free.** If `allelearning.in` uses Cloudflare DNS,
+turn on Email Routing and forward `contact@allelearning.in` to a personal inbox.
+Cloudflare adds the MX records for you. You can receive but not send *as* that
+address without extra setup (Gmail's "Send mail as" via an SMTP relay covers it).
+Best when enquiry volume is low and one person answers them.
+
+**2. Zoho Mail — free for one domain, small team.** A real mailbox with webmail,
+IMAP and its own SMTP. You add MX records yourself. Best when you want a genuine
+shared inbox without a per-seat bill.
+
+**3. Google Workspace — around $6/user/month.** A real mailbox plus everything else.
+Best when the address needs to be shared by several people with delegation and
+proper handover.
+
+Whichever you choose, the shape is the same: point the domain's **MX records** at the
+provider, verify the domain, create the address, then set `REPLY_TO_EMAIL` and
+`SUPPORT_EMAIL` above.
+
+> **MX is for receiving; SPF/DKIM are for sending.** They are independent. Getting
+> your sending provider verified does not create a mailbox, and creating a mailbox
+> does not make your transactional mail pass authentication. You need both.
+
+Nothing in this platform receives mail. There is no IMAP client, no inbound webhook,
+and no ticketing — an enquiry to `contact@` lands in whatever inbox you configure
+above and is answered by a human there. If you later want enquiries to become
+tracked records in the admin console, that is a feature to build, not a setting.
 
 ## 12. 🟢 SMS and WhatsApp
 
@@ -551,6 +640,9 @@ Before the first production deploy:
 - [ ] `celery beat` **and** a `maintenance` worker running for the scheduler, or no sweep runs
 - [ ] `DISABLED_JOBS` set for anything this deployment does not run
 - [ ] SPF, DKIM and DMARC configured on the sending domain
+- [ ] `EMAIL_PROVIDER` set to `smtp` or `resend` — the default sends nothing
+- [ ] `contact@allelearning.in` exists as a real mailbox and a test email to it arrives
+- [ ] `REPLY_TO_EMAIL` and `SUPPORT_EMAIL` both point at it
 - [ ] Postgres backups enabled in Railway
 - [ ] Every default password from `.env.example` replaced
 - [ ] The first superadmin created with `python -m bootstrap`, and 2FA enrolled on it

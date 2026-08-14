@@ -447,29 +447,98 @@ Either way `FROM_EMAIL` must be on a domain whose DNS you control. That is what
 authentication is checked against — `REPLY_TO_EMAIL` is not checked and can point
 anywhere.
 
+### The SPF record currently published
+
+```
+Type: TXT    Host: @    Value: v=spf1 include:secureserver.net -all
+```
+
+`secureserver.net` is GoDaddy, so the mailbox lives there. Three things follow, and
+the second one is the one that bites.
+
+**It authorises GoDaddy and nothing else.** `-all` is a *hard fail*: any server not
+covered by that `include` is to be rejected, not merely treated with suspicion. That
+is the correct end state, but it means every future sender has to be added to this
+record before it can send.
+
+**It does not, on its own, fix the Gmail rejection.** SPF is evaluated against the
+envelope sender (`MAIL FROM`), not the `From:` header a person sees. Sending through
+Hostinger with `From: noreply@allelearning.in` leaves two possibilities and both
+fail: either the envelope stays `@srv1628639.hstgr.cloud`, SPF passes for *Hostinger*
+and then fails DMARC because it does not align with the `From:` domain — or the
+envelope is rewritten to `@allelearning.in`, and this record hard-fails it because
+Hostinger is not GoDaddy. The fix is to send through something this record
+authorises, not to publish the record and change nothing else.
+
+**So do not set `FROM_EMAIL=noreply@allelearning.in` while still sending via
+Hostinger.** Today's mail is unauthenticated for a domain nobody checks; that change
+would make it *provably* unauthorised for a domain that now publishes `-all`, and
+providers beyond Gmail would start rejecting it too.
+
+### One SPF record. Always exactly one.
+
+A domain may publish only one `v=spf1` TXT record. Two is not "both apply" — it is a
+`permerror`, and the practical result is that **every** message fails authentication,
+including the ones that worked yesterday. This is the most common way a working mail
+setup gets broken months later.
+
+So when Resend is added, **edit the existing record**; never add a second:
+
+```
+v=spf1 include:secureserver.net include:_spf.resend.com -all
+```
+
+### Still needed
+
+SPF is one of three, and it is the weakest on its own:
+
+- **DKIM** — a signature Gmail now effectively requires alongside SPF. GoDaddy
+  publishes these for the mailbox; Resend gives you its own when you verify the
+  domain. Both sets can coexist, because DKIM records are per-selector.
+- **DMARC** — a TXT record at `_dmarc`. Start at `p=none` and read the reports before
+  moving to `p=reject`; going straight to reject with an unverified setup silently
+  destroys real mail.
+- **MX** — for *receiving*. SPF is outbound only and does not make a single message
+  arrive. See § 11a.
+
+### Recommended split
+
+Keep the human mailbox and the machine sender separate:
+
+| | Provider | Address |
+|---|---|---|
+| Enquiries, read by a person | GoDaddy | `contact@allelearning.in` |
+| Transactional (resets, receipts) | Resend | `noreply@allelearning.in` |
+
+GoDaddy's SMTP has a low daily cap that is fine for a person answering enquiries and
+not fine for password resets across a customer base — and a transactional provider
+gives you delivery logs and bounce handling, which is what you want when a customer
+says a reset never arrived. Both senders live in the one SPF record above.
+
 ---
 
 ## 11a. 🔴 The enquiries mailbox — `contact@allelearning.in`
 
-You need somewhere that mail *arrives*. Three options, cheapest first:
+**Provider: GoDaddy**, as recorded by the `include:secureserver.net` in the SPF
+record above. DNS is managed in Cloudflare.
 
-**1. Cloudflare Email Routing — free.** If `allelearning.in` uses Cloudflare DNS,
-turn on Email Routing and forward `contact@allelearning.in` to a personal inbox.
-Cloudflare adds the MX records for you. You can receive but not send *as* that
-address without extra setup (Gmail's "Send mail as" via an SMTP relay covers it).
-Best when enquiry volume is low and one person answers them.
+You need somewhere that mail *arrives*, and that is **MX records** — not the SPF
+record. Publishing SPF and stopping there gives a domain that can prove who sends
+for it and has nowhere to receive; an enquiry to `contact@` bounces. Take the MX
+values from the GoDaddy mailbox setup and add them in Cloudflare.
 
-**2. Zoho Mail — free for one domain, small team.** A real mailbox with webmail,
-IMAP and its own SMTP. You add MX records yourself. Best when you want a genuine
-shared inbox without a per-seat bill.
+Two Cloudflare-specific things that catch people:
 
-**3. Google Workspace — around $6/user/month.** A real mailbox plus everything else.
-Best when the address needs to be shared by several people with delegation and
-proper handover.
+- **MX records must be DNS-only (grey cloud), never proxied.** Cloudflare's proxy
+  handles HTTP. An orange-clouded mail record does not work.
+- If Cloudflare Email Routing was ever enabled on this zone, **turn it off.** It
+  installs its own MX records, and they will compete with GoDaddy's.
 
-Whichever you choose, the shape is the same: point the domain's **MX records** at the
-provider, verify the domain, create the address, then set `REPLY_TO_EMAIL` and
-`SUPPORT_EMAIL` above.
+Then create the address and set `REPLY_TO_EMAIL` and `SUPPORT_EMAIL` above.
+
+> Verify with a real message from outside — send from a personal Gmail account and
+> confirm it lands. Green ticks in a DNS panel say the record exists, not that mail
+> is being delivered.
 
 > **MX is for receiving; SPF/DKIM are for sending.** They are independent. Getting
 > your sending provider verified does not create a mailbox, and creating a mailbox
@@ -639,7 +708,10 @@ Before the first production deploy:
 - [ ] `INLINE_EXECUTION=false` on automation, with a Celery worker actually running
 - [ ] `celery beat` **and** a `maintenance` worker running for the scheduler, or no sweep runs
 - [ ] `DISABLED_JOBS` set for anything this deployment does not run
-- [ ] SPF, DKIM and DMARC configured on the sending domain
+- [ ] SPF published — and **exactly one** `v=spf1` record on the domain, listing
+      every sender (a second record is a permerror that fails all mail)
+- [ ] DKIM published for each sender, and DMARC at `_dmarc` (start `p=none`)
+- [ ] MX records point at the mailbox provider — SPF is outbound only
 - [ ] `EMAIL_PROVIDER` set to `smtp` or `resend` — the default sends nothing
 - [ ] `contact@allelearning.in` exists as a real mailbox and a test email to it arrives
 - [ ] `REPLY_TO_EMAIL` and `SUPPORT_EMAIL` both point at it

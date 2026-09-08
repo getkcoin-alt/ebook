@@ -254,13 +254,10 @@ class Ingester:
         category_ids = [i for i in [self.category_id(shelf)] if i]
         language = (book.get("languages") or ["en"])[0]
 
-        # Gutenberg has no blurb, and inventing one would be inventing a fact about
-        # a book. State what is true instead.
-        author_line = ", ".join(_display_name(n) for n in people) or "an unknown hand"
-        description = (
-            f"{title} by {author_line}. A Project Gutenberg edition, in the public "
-            f"domain and free to keep. Delivered as EPUB, readable in the browser or "
-            f"on any e-reader."
+        # Gutenberg has no reliable publisher blurb. Generate richer copy from
+        # verified metadata instead of inventing a plot synopsis or endorsement.
+        description = catalogue_description(
+            title=title, authors=people, shelf=shelf, language=language
         )
 
         payload = {
@@ -329,6 +326,55 @@ class Ingester:
             f"{len(epub) // 1024:>5}KB {'cover' if cover_key else '     '}"
         )
 
+    def refresh_descriptions(self) -> int:
+        """Bring every existing catalogue listing up to the current copy standard."""
+        cursor = None
+        updated = 0
+        skipped = 0
+        while True:
+            params = {"limit": 100}
+            if cursor:
+                params["cursor"] = cursor
+            page_response = self.c.get("/v1/admin/books", headers=self.h, params=params)
+            page_response.raise_for_status()
+            page = page_response.json()
+            for row in page.get("items", []):
+                detail_response = self.c.get(f"/v1/admin/books/{row['id']}", headers=self.h)
+                if detail_response.status_code != 200:
+                    print(f"  ! {row['title'][:44]}: detail {detail_response.status_code}")
+                    skipped += 1
+                    continue
+                detail = detail_response.json()
+                authors = [
+                    item.get("author", {}).get("name", "")
+                    for item in detail.get("contributors", [])
+                    if item.get("author", {}).get("name")
+                ] or [item.get("name", "") for item in detail.get("authors", []) if item.get("name")]
+                categories = detail.get("categories", [])
+                shelf = categories[0].get("name", "General") if categories else "General"
+                description = catalogue_description(
+                    title=detail["title"],
+                    authors=authors,
+                    shelf=shelf,
+                    language=detail.get("language", "en"),
+                )
+                update = self.c.patch(
+                    f"/v1/admin/books/{row['id']}",
+                    headers=self.h,
+                    json={"description": description, "meta_description": description[:500]},
+                )
+                if update.status_code == 200:
+                    updated += 1
+                    print(f"  ~ {detail['title'][:54]}")
+                else:
+                    skipped += 1
+                    print(f"  ! {detail['title'][:44]}: update {update.status_code}")
+            cursor = page.get("next_cursor")
+            if not cursor or not page.get("has_more"):
+                break
+        print(f"updated {updated} description(s); skipped {skipped}")
+        return updated
+
 
 #: Gutenberg asks that automated clients identify themselves, and it drops
 #: connections from anonymous ones under load — which is what the first run hit.
@@ -370,10 +416,38 @@ def _display_name(name: str) -> str:
     return name.strip()
 
 
+def catalogue_description(
+    *,
+    title: str,
+    authors: list[str],
+    shelf: str,
+    language: str,
+) -> str:
+    """Write useful catalogue copy from verified metadata only."""
+    author_line = ", ".join(_display_name(name) for name in authors) or "an unknown author"
+    language_name = LANGUAGE_NAMES.get(language.lower(), language.upper())
+    article = "an" if language_name[:1].lower() in {"a", "e", "i", "o", "u"} else "a"
+    return " ".join(
+        (
+            f"{title} is presented here as {article} {language_name}-language digital edition by {author_line}.",
+            f"It is filed in our {shelf} collection to help readers browse this work alongside related titles.",
+            "This edition comes from Project Gutenberg, whose source text is in the public domain in the United States.",
+            "Your purchase adds the EPUB edition to your personal library, where it can be read online in the allelearning.in reader.",
+            "You can also download the same EPUB file for use in a compatible reading app or e-reader for your personal reading.",
+            "Please review the title, author, language, and available format before placing an order; edition details can vary across public-domain sources.",
+        )
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--count", type=int, default=60, help="books to publish")
     parser.add_argument("--languages", default="en", help="comma-separated ISO codes")
+    parser.add_argument(
+        "--refresh-descriptions",
+        action="store_true",
+        help="rewrite every existing description from verified catalogue metadata",
+    )
     args = parser.parse_args()
 
     with httpx.Client(base_url=API, timeout=90.0) as c:
@@ -391,6 +465,9 @@ def main() -> int:
 
         ing = Ingester(c, headers)
         ing.load_existing_slugs()
+
+        if args.refresh_descriptions:
+            return 0 if ing.refresh_descriptions() else 1
 
         totals = Totals()
         page_url = "https://gutendex.com/books"

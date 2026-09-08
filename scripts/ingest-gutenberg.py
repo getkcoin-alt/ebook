@@ -35,6 +35,7 @@ import os
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import httpx
@@ -338,13 +339,24 @@ class Ingester:
             page_response = self.c.get("/v1/admin/books", headers=self.h, params=params)
             page_response.raise_for_status()
             page = page_response.json()
-            for row in page.get("items", []):
-                detail_response = self.c.get(f"/v1/admin/books/{row['id']}", headers=self.h)
-                if detail_response.status_code != 200:
-                    print(f"  ! {row['title'][:44]}: detail {detail_response.status_code}")
+            rows = page.get("items", [])
+
+            # Detail reads are independent. A small pool keeps this one-off
+            # migration fast without asking the catalogue service to absorb an
+            # unbounded burst.
+            def get_detail(row: dict) -> tuple[dict, dict | None, int]:
+                response = self.c.get(f"/v1/admin/books/{row['id']}", headers=self.h)
+                return row, response.json() if response.status_code == 200 else None, response.status_code
+
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                details = list(pool.map(get_detail, rows))
+
+            changes: list[tuple[str, str, str, str]] = []
+            for row, detail, status_code in details:
+                if detail is None:
+                    print(f"  ! {row['title'][:44]}: detail {status_code}")
                     skipped += 1
                     continue
-                detail = detail_response.json()
                 authors = [
                     item.get("author", {}).get("name", "")
                     for item in detail.get("contributors", [])
@@ -358,17 +370,31 @@ class Ingester:
                     shelf=shelf,
                     language=detail.get("language", "en"),
                 )
-                update = self.c.patch(
-                    f"/v1/admin/books/{row['id']}",
+                if (
+                    detail.get("description") == description
+                    and detail.get("meta_description") == description[:500]
+                ):
+                    continue
+                changes.append((row["id"], detail["title"], description, description[:500]))
+
+            def update_description(change: tuple[str, str, str, str]) -> tuple[str, str, int]:
+                book_id, title, description, meta_description = change
+                response = self.c.patch(
+                    f"/v1/admin/books/{book_id}",
                     headers=self.h,
-                    json={"description": description, "meta_description": description[:500]},
+                    json={"description": description, "meta_description": meta_description},
                 )
-                if update.status_code == 200:
+                return title, response.text, response.status_code
+
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                results = list(pool.map(update_description, changes))
+            for title, _response_text, status_code in results:
+                if status_code == 200:
                     updated += 1
-                    print(f"  ~ {detail['title'][:54]}")
+                    print(f"  ~ {title[:54]}")
                 else:
                     skipped += 1
-                    print(f"  ! {detail['title'][:44]}: update {update.status_code}")
+                    print(f"  ! {title[:44]}: update {status_code}")
             cursor = page.get("next_cursor")
             if not cursor or not page.get("has_more"):
                 break
